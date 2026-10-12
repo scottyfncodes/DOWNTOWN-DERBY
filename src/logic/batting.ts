@@ -1,7 +1,7 @@
 import type { AimSettings, ContactQuality, ContactResult, LaunchParams, SwingTiming, Vec3 } from './types';
 import type { BatSpec, BallSpec } from './equipment';
 
-export const BASE_LAUNCH_SPEED = 74; // m/s, arcade scale
+export const BASE_LAUNCH_SPEED = 63; // m/s, arcade scale (keeps shots inside the dense blocks)
 export const MIN_LOFT = 6;
 export const MAX_LOFT = 48;
 export const MAX_YAW = (38 * Math.PI) / 180;
