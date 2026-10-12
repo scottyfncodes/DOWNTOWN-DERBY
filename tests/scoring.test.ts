@@ -51,7 +51,9 @@ describe('ShotScorer', () => {
     expect(s.impact(ev('a', 'crate', 1, { direct: false }), 'a|b')).not.toBeNull();
     expect(s.impact(ev('a', 'crate', 1.1, { direct: false }), 'a|b')).toBeNull();
     expect(s.impact(ev('a', 'crate', 1.2, { direct: false }), 'a|b')).toBeNull();
-    expect(s.impact(ev('a', 'crate', 2, { direct: false }), 'a|b')).not.toBeNull();
+    // A different object in the same window is fine, and the pair is free again after the window.
+    expect(s.impact(ev('c', 'crate', 1.3, { direct: false }), 'b|c')).not.toBeNull();
+    expect(s.impact(ev('d', 'crate', 2, { direct: false }), 'a|b')).not.toBeNull();
   });
 
   it('caps per-object contribution so nothing can be farmed', () => {
@@ -72,7 +74,16 @@ describe('ShotScorer', () => {
     const d = direct.impact(ev('x', 'sign', 1, { direct: true }))!;
     const sec = secondary.impact(ev('x', 'sign', 1, { direct: false }))!;
     expect(sec.points).toBeLessThan(d.points);
-    expect(secondary.impact(ev('y', 'sign', 1.2, { direct: false, speed: 1 }))).toBeNull();
+    expect(secondary.impact(ev('y', 'sign', 1.2, { direct: false, speed: 4 }))).toBeNull();
+  });
+
+  it('an object only chains once per shot and static frames never chain', () => {
+    const s = new ShotScorer();
+    expect(s.impact(ev('h', 'hvac', 1, { direct: false }), 'a|h>h')).not.toBeNull();
+    expect(s.impact(ev('h', 'hvac', 2, { direct: false }), 'b|h>h')).toBeNull();
+    expect(s.impact(ev('h', 'hvac', 3, { direct: true }))).not.toBeNull();
+    expect(s.impact(ev('frame', 'scaffold', 4, { direct: false }), 'p|frame>frame')).toBeNull();
+    expect(s.impact(ev('frame', 'scaffold', 5, { direct: true }))).not.toBeNull();
   });
 
   it('ignores static walls after a couple of bounces and never chains them', () => {

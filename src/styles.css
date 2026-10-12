@@ -87,7 +87,7 @@ button:disabled { filter: grayscale(0.6) brightness(0.7); cursor: default; }
 .balls-value { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .balls-value small { font-size: 16px; opacity: 0.8; }
 .hud-pills { display: flex; gap: 6px; margin-top: 6px; }
-.pill { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 9px; border-radius: 999px; background: rgba(20,13,31,0.6); color: var(--cream); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.pill { white-space: nowrap; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 9px; border-radius: 999px; background: rgba(20,13,31,0.6); color: var(--cream); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .pill.gold { background: rgba(255,209,102,0.92); color: var(--ink); }
 .combo-badge {
   position: absolute; left: 50%; top: calc(var(--sat) + 86px); transform: translate(-50%, 0) scale(0); 
@@ -143,7 +143,7 @@ button:disabled { filter: grayscale(0.6) brightness(0.7); cursor: default; }
 @keyframes popup { 0% { opacity: 0; transform: translate(-50%, -30%) scale(0.6); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); } 25% { transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -140%) scale(0.95); } }
 
 .center-callout {
-  position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(0.5); opacity: 0;
+  position: absolute; left: 50%; top: 27%; transform: translate(-50%, -50%) scale(0.5); opacity: 0;
   font-family: var(--title-font); font-size: clamp(40px, 11vw, 72px); color: var(--gold); -webkit-text-stroke: 2px var(--ink);
   text-shadow: 0 6px 0 var(--ink), 0 12px 30px rgba(0,0,0,0.6); pointer-events: none; text-align: center; white-space: nowrap;
 }
@@ -242,3 +242,8 @@ button:disabled { filter: grayscale(0.6) brightness(0.7); cursor: default; }
   .shot-card { bottom: calc(var(--sab) + 150px); padding: 8px 12px; }
   .score-value { font-size: 36px; }
 }
+
+/* Hidden layers must never intercept taps. */
+#hud:not(.visible), #hud:not(.visible) * { pointer-events: none !important; }
+.shot-card:not(.visible) { pointer-events: none !important; }
+.screen:not(.visible), .screen:not(.visible) * { pointer-events: none !important; }

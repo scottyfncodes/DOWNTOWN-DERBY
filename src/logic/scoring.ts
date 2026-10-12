@@ -49,11 +49,14 @@ export const COMBO_GRACE = 1.7; // seconds between scoring impacts before the ch
 export const COMBO_STEPS = [1, 1.5, 2, 2.5, 3, 3.5, 4]; // multiplier by chain index
 export const MAX_COMBO = COMBO_STEPS[COMBO_STEPS.length - 1];
 export const MAX_EVENTS_PER_OBJECT = 3;
+export const MAX_SECONDARY_PER_OBJECT = 1; // an object only "chains" once per shot
 export const MAX_OBJECT_POINTS_FACTOR = 2.4; // per object per shot, as multiple of its base value
 export const SECONDARY_FACTOR = 0.55;
-export const SECONDARY_MIN_SPEED = 3.5;
+export const SECONDARY_MIN_SPEED = 6;
+/** Materials that only score when the ball itself hits them (never via chain reactions). */
+export const DIRECT_ONLY_MATERIALS = new Set<MaterialKind>(['scaffold', 'plank']);
 export const DIRECT_MIN_SPEED = 2.0;
-export const DISTANCE_POINTS_PER_METER = 1.5;
+export const DISTANCE_POINTS_PER_METER = 1;
 export const DESTROY_BONUS_FACTOR = 0.6;
 export const BONUS_TARGET_MULT = 2;
 
@@ -81,6 +84,7 @@ export class ShotScorer {
   chainCount = 0;
   lastScoreTime = -Infinity;
   private objectEvents = new Map<string, number>();
+  private secondaryEvents = new Map<string, number>();
   private objectPoints = new Map<string, number>();
   private recentPairs = new Map<string, number>();
   private staticBounces = 0;
@@ -134,6 +138,8 @@ export class ShotScorer {
 
     const minSpeed = ev.direct ? DIRECT_MIN_SPEED : SECONDARY_MIN_SPEED;
     if (ev.speed < minSpeed) return null;
+    if (!ev.direct && DIRECT_ONLY_MATERIALS.has(ev.material)) return null;
+    if (!ev.direct && (this.secondaryEvents.get(ev.objectId) ?? 0) >= MAX_SECONDARY_PER_OBJECT) return null;
 
     // Duplicate-pair guard: the same two bodies grinding together only score once per window.
     if (pairKey) {
@@ -164,6 +170,7 @@ export class ShotScorer {
     const pts = Math.round(raw * mult);
 
     this.objectEvents.set(ev.objectId, count + 1);
+    if (!ev.direct) this.secondaryEvents.set(ev.objectId, (this.secondaryEvents.get(ev.objectId) ?? 0) + 1);
     this.objectPoints.set(ev.objectId, already + raw);
     this.objectsDamaged.add(ev.objectId);
     this.materialsHit.add(ev.material);

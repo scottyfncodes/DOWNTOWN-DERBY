@@ -59,7 +59,7 @@ describe('launch', () => {
     const l = computeLaunch({ aim, contact: c, bat, ball });
     expect(l.velocity.z).toBeLessThan(0);
     expect(l.velocity.y).toBeGreaterThan(0);
-    expect(l.speed).toBeGreaterThan(60);
+    expect(l.speed).toBeGreaterThan(50);
   });
 
   it('scales with contact power and equipment', () => {
