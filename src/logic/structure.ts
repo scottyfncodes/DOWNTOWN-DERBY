@@ -1,3 +1,5 @@
+import type { ContactQuality } from './types';
+
 /**
  * Structural model for destructible buildings. Pure and deterministic: no physics engine, no renderer.
  *
@@ -111,6 +113,55 @@ export function impactDamage(speed: number, mass: number, penetrator = 1): numbe
 export function penetrationRetention(damage: number, hpBefore: number): number {
   if (damage <= hpBefore) return 0;
   return Math.sqrt(1 - hpBefore / damage) * 0.92;
+}
+
+// ---- Impact craters: every hit tears a chunk out, sized by the quality of contact ----
+
+/** Destruction scale per contact quality: a perfect swing tears out a big chunk, a weak one chips the surface. */
+export const QUALITY_DESTRUCTION: Record<ContactQuality, number> = {
+  PERFECT: 1,
+  SOLID: 0.7,
+  POOR: 0.4,
+  WEAK: 0.2,
+  MISS: 0.08,
+};
+/** Crater power is the kinetic impact damage times this factor (times the quality scale). */
+export const CRATER_DAMAGE_MULT = 4.5;
+export const CRATER_MAX_RADIUS = 13;
+export const CRATER_MAX_POWER = 80;
+export const CRATER_MIN_RADIUS = 0.6;
+
+export interface Crater {
+  /** metres */
+  radius: number;
+  /** damage at the impact point (linear falloff to zero at the radius) */
+  power: number;
+}
+
+/**
+ * Crater for a projectile hit. Radius grows with contact quality, speed and mass; rockets (penetrator > 1) dig wider.
+ * Power is kinetic damage scaled up so even a clean league-ball hit takes several sections out of a wall.
+ */
+export function impactCrater(quality: ContactQuality, speed: number, mass: number, penetrator = 1): Crater {
+  const q = QUALITY_DESTRUCTION[quality];
+  const speedK = Math.max(0.2, Math.min(1.6, speed / 63));
+  const massK = Math.max(0.8, Math.min(1.6, Math.sqrt(mass / 5)));
+  const rocketK = penetrator > 1 ? 1 + Math.min(0.5, (penetrator - 1) * 0.2) : 1;
+  const radius = Math.max(CRATER_MIN_RADIUS, Math.min(CRATER_MAX_RADIUS, (2 + 9 * q) * speedK * massK * rocketK));
+  const power = Math.min(CRATER_MAX_POWER, impactDamage(speed, mass, penetrator) * CRATER_DAMAGE_MULT * (0.3 + 0.7 * q));
+  return { radius, power };
+}
+
+/** Cells hit by a crater centred at a point, nearest first, with the damage each takes. */
+export function craterDamageList(s: Structure, x: number, y: number, z: number, crater: Crater): { cell: StructureCell; damage: number; dist: number }[] {
+  const out: { cell: StructureCell; damage: number; dist: number }[] = [];
+  for (const c of s.cellsNear(x, y, z, crater.radius)) {
+    const dist = distanceToBox(x, y, z, c);
+    const damage = blastDamage(dist, crater.radius, crater.power);
+    if (damage > 0.05) out.push({ cell: c, damage, dist });
+  }
+  out.sort((a, b) => a.dist - b.dist);
+  return out;
 }
 
 /** Radial blast damage with linear falloff: a blast inside a room reaches every wall, one outside only scars a face. */

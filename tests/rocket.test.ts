@@ -173,29 +173,37 @@ describe('rocket penetration through structure (deterministic simulation)', () =
     expect(r.broken.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('where you detonate matters: an entry blast breaches the face, an interior blast takes out the core', () => {
-    const entry = new Structure(concreteBlock());
-    const deep = new Structure(concreteBlock());
-    const power = spec.blastPower;
-    const radius = spec.blastRadius;
+  it('where you detonate matters: short of the wall scars it, at the face breaches it, inside a tower drops floors', () => {
     const blast = (s: Structure, x: number, y: number, z: number) => {
       let n = 0;
-      for (const c of s.cellsNear(x, y, z, radius)) {
-        if (s.damage(c.id, blastDamage(distanceToBox(x, y, z, c), radius, power))?.broke) n++;
+      for (const c of s.cellsNear(x, y, z, spec.blastRadius)) {
+        if (s.damage(c.id, blastDamage(distanceToBox(x, y, z, c), spec.blastRadius, spec.blastPower))?.broke) n++;
       }
       return n;
     };
-    const atEntry = blast(entry, 0, 7, entry.minZ - 0.5);
-    const inside = blast(deep, 0, 7, deep.spec.z);
-    expect(atEntry).toBeGreaterThan(0);
-    expect(inside).toBeGreaterThan(0);
-    const core = (s: Structure) => s.cells.find((c) => c.kind === 'core' && c.iy === 1)!;
-    expect(core(entry).state).not.toBe('broken');
-    expect(core(deep).state).toBe('broken');
-    expect(entry.cells.filter((c) => c.kind === 'facade' && c.state === 'broken').length).toBeGreaterThan(deep.cells.filter((c) => c.kind === 'facade' && c.state === 'broken').length);
-    // A concrete mid-rise survives a single rocket either way; it takes sustained damage.
+    // Mid-rise concrete block: detonating 12 m short only scars it; at the face it comes down.
+    const short = new Structure(concreteBlock());
+    const face = new Structure(concreteBlock());
+    expect(blast(short, 0, 7, short.minZ - 12)).toBeGreaterThan(0);
+    expect(short.evaluate()).toBeNull();
+    expect(blast(face, 0, 7, face.minZ - 0.5)).toBeGreaterThan(0);
+    expect(face.evaluate()).not.toBeNull();
+    // Glass skyscraper: an entry blast high up breaches the skin but the steel core holds; the same blast inside drops
+    // everything above it, and lower down drops more.
+    const towerSpec: BuildingSpec = { id: 2, x: -60, z: -100, w: 36, d: 36, h: 128, style: 'tower', floors: 20, nx: 4, nz: 4, core: true };
+    const entry = new Structure(towerSpec);
+    const high = new Structure(towerSpec);
+    const low = new Structure(towerSpec);
+    const brokeEntry = blast(entry, -60, 60, entry.maxZ + 0.5);
+    const brokeHigh = blast(high, -60, 60, -100);
+    blast(low, -60, 8, -100);
+    expect(brokeEntry).toBeGreaterThan(10);
     expect(entry.evaluate()).toBeNull();
-    expect(deep.evaluate()).toBeNull();
-    expect(entry.damaged && deep.damaged).toBe(true);
+    expect(brokeHigh).toBeGreaterThan(brokeEntry);
+    const highCollapse = high.evaluate()!;
+    const lowCollapse = low.evaluate()!;
+    expect(highCollapse).not.toBeNull();
+    expect(lowCollapse).not.toBeNull();
+    expect(lowCollapse.floorsDropped).toBeGreaterThan(highCollapse.floorsDropped);
   });
 });

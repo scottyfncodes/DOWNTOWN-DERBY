@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CELL_HP, UNSTABLE_MARGIN, Structure, blastDamage, chunksForCollapse, distanceToBox, impactDamage, penetrationRetention, type BuildingSpec } from '../src/logic/structure';
+import { CELL_HP, CRATER_MAX_POWER, CRATER_MAX_RADIUS, QUALITY_DESTRUCTION, UNSTABLE_MARGIN, Structure, blastDamage, craterDamageList, impactCrater, chunksForCollapse, distanceToBox, impactDamage, penetrationRetention, type BuildingSpec } from '../src/logic/structure';
 import { ShotScorer } from '../src/logic/scoring';
 
 function brickLowRise(id = 0): BuildingSpec {
@@ -357,5 +357,64 @@ describe('demolition scoring', () => {
     const demo = new ShotScorer();
     demo.collapse(0, 2, true, false, 1);
     expect(demo.finish(60, 'SOLID').score).toBeGreaterThan(long.score * 2);
+  });
+});
+
+describe('impact craters', () => {
+  it('crater size and power are dictated by contact quality', () => {
+    const order = ['PERFECT', 'SOLID', 'POOR', 'WEAK', 'MISS'] as const;
+    const craters = order.map((q) => impactCrater(q, 63, 5));
+    for (let i = 1; i < craters.length; i++) {
+      expect(craters[i].radius).toBeLessThan(craters[i - 1].radius);
+      expect(craters[i].power).toBeLessThan(craters[i - 1].power);
+    }
+    expect(QUALITY_DESTRUCTION.PERFECT).toBe(1);
+    // A perfect league-ball hit digs a crater several metres across with far more than one wall's worth of damage.
+    expect(craters[0].radius).toBeGreaterThan(9);
+    expect(craters[0].power).toBeGreaterThan(CELL_HP.concrete * 3);
+  });
+
+  it('speed, mass and rockets enlarge the crater, within caps', () => {
+    const base = impactCrater('SOLID', 50, 5);
+    expect(impactCrater('SOLID', 70, 5).radius).toBeGreaterThan(base.radius);
+    expect(impactCrater('SOLID', 50, 16).power).toBeGreaterThan(base.power);
+    expect(impactCrater('SOLID', 50, 16).radius).toBeGreaterThan(base.radius);
+    expect(impactCrater('SOLID', 50, 5, 2.2).radius).toBeGreaterThan(base.radius);
+    const huge = impactCrater('PERFECT', 200, 50, 4);
+    expect(huge.radius).toBeLessThanOrEqual(CRATER_MAX_RADIUS);
+    expect(huge.power).toBeLessThanOrEqual(CRATER_MAX_POWER);
+    expect(impactCrater('MISS', 1, 5).radius).toBeGreaterThan(0);
+  });
+
+  it('a perfect hit takes a multi-section chunk out of a wall; a poor one barely more than the panel it hits', () => {
+    const hit = (quality: 'PERFECT' | 'SOLID' | 'POOR', speed: number) => {
+      const s = new Structure(concreteTower());
+      const target = s.cells.find((c) => c.kind === 'facade' && c.iy === 3 && c.nz === 1 && c.ix === 2)!;
+      const px = target.x;
+      const py = target.y;
+      const pz = target.z + target.sz / 2 + 0.3;
+      let broken = 0;
+      for (const { cell, damage } of craterDamageList(s, px, py, pz, impactCrater(quality, speed, 5))) if (s.damage(cell.id, damage)?.broke) broken++;
+      return { broken, s, target };
+    };
+    const perfect = hit('PERFECT', 66);
+    const solid = hit('SOLID', 58);
+    const poor = hit('POOR', 44);
+    expect(perfect.target.state).toBe('broken');
+    expect(perfect.broken).toBeGreaterThanOrEqual(6);
+    expect(perfect.broken).toBeGreaterThan(solid.broken);
+    expect(solid.broken).toBeGreaterThan(poor.broken);
+    expect(poor.broken).toBeLessThanOrEqual(2);
+    // The chunk spans floors: sections above and below the impact break too.
+    const floors = new Set(perfect.s.cells.filter((c) => c.state === 'broken').map((c) => c.iy));
+    expect(floors.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('crater damage list is nearest-first and skips broken cells', () => {
+    const s = new Structure(brickLowRise());
+    const list = craterDamageList(s, s.spec.x, 6, s.maxZ + 0.3, impactCrater('PERFECT', 63, 5));
+    for (let i = 1; i < list.length; i++) expect(list[i].dist).toBeGreaterThanOrEqual(list[i - 1].dist);
+    for (const { cell } of list) s.damage(cell.id, 1000);
+    expect(craterDamageList(s, s.spec.x, 6, s.maxZ + 0.3, impactCrater('PERFECT', 63, 5)).length).toBe(0);
   });
 });

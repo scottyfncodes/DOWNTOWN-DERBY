@@ -39,7 +39,7 @@ export function detectQuality(): Quality {
     shadowSize: mobile ? 1024 : 2048,
     fragments: mobile ? 160 : 320,
     particles: lowSpec ? 300 : mobile ? 420 : 800,
-    chunks: lowSpec ? 24 : mobile ? 28 : 40,
+    chunks: lowSpec ? 32 : mobile ? 44 : 64,
     lowSpec,
   };
 }
