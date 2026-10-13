@@ -52,6 +52,8 @@ export interface BuildingSpec {
   nz: number;
   /** low-rises have no core */
   core: boolean;
+  /** section size multiplier (distant buildings use bigger sections); defaults to 1 */
+  grain?: number;
 }
 
 export interface StructureCell {
@@ -233,7 +235,9 @@ export class Structure {
     const cd = (s.d - 2 * t) / s.nz;
     const fac = this.facadeMaterial();
     const colMat = this.columnMaterial();
-    const colHp = CELL_HP[colMat === 'steel' ? 'column' : 'column'] * COLUMN_HP_SCALE[s.style];
+    // Bigger (coarser) sections carry more material, so they take more to break.
+    const hpK = 1 + 0.5 * ((s.grain ?? 1) - 1);
+    const colHp = CELL_HP.column * COLUMN_HP_SCALE[s.style] * hpK;
     const steelPanelFloor = (iy: number) => s.style === 'tower' && iy % 3 === 2;
     const add = (ix: number, iy: number, iz: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, material: CellMaterial, kind: CellKind, hp: number, weight: number, nx = 0, nz = 0) => {
       const cell: StructureCell = { id: this.cells.length, building: s.id, ix, iy, iz, x, y, z, sx, sy, sz, material, kind, hp, maxHp: hp, weight, state: 'intact', nx, nz };
@@ -260,14 +264,14 @@ export class Structure {
       for (let ix = 0; ix < s.nx; ix++) {
         const x = s.x - s.w / 2 + t + (ix + 0.5) * cw;
         for (const sz of [-1, 1]) {
-          add(ix + 1, iy, sz < 0 ? 0 : s.nz + 1, x, cy, s.z + sz * (s.d / 2 - t / 2), cw, fh, t, facMat, 'facade', CELL_HP[facMat], WEIGHT_FACADE[facMat], 0, sz);
+          add(ix + 1, iy, sz < 0 ? 0 : s.nz + 1, x, cy, s.z + sz * (s.d / 2 - t / 2), cw, fh, t, facMat, 'facade', CELL_HP[facMat] * hpK, WEIGHT_FACADE[facMat], 0, sz);
         }
       }
       // Side facades (x faces)
       for (let iz = 0; iz < s.nz; iz++) {
         const z = s.z - s.d / 2 + t + (iz + 0.5) * cd;
         for (const sx of [-1, 1]) {
-          add(sx < 0 ? 0 : s.nx + 1, iy, iz + 1, s.x + sx * (s.w / 2 - t / 2), cy, z, t, fh, cd, facMat, 'facade', CELL_HP[facMat], WEIGHT_FACADE[facMat], sx, 0);
+          add(sx < 0 ? 0 : s.nx + 1, iy, iz + 1, s.x + sx * (s.w / 2 - t / 2), cy, z, t, fh, cd, facMat, 'facade', CELL_HP[facMat] * hpK, WEIGHT_FACADE[facMat], sx, 0);
         }
       }
       // Core
@@ -279,7 +283,7 @@ export class Structure {
       const iw = s.w - 2 * t - 0.1;
       const id = s.d - 2 * t - 0.1;
       if (iw > 1 && id > 1) {
-        add(Math.ceil(s.nx / 2), iy, Math.ceil(s.nz / 2), s.x, y0 + fh - SLAB_T / 2, s.z, iw, SLAB_T, id, 'slab', 'slab', CELL_HP.slab, 0);
+        add(Math.ceil(s.nx / 2), iy, Math.ceil(s.nz / 2), s.x, y0 + fh - SLAB_T / 2, s.z, iw, SLAB_T, id, 'slab', 'slab', CELL_HP.slab * hpK, 0);
       }
     }
   }

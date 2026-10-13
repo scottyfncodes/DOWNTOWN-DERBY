@@ -331,7 +331,7 @@ export interface CellTextures {
  * One modular facade cell (about 8.4 m x 4.8 m): two or three windows and a floor band. `variant` changes which windows
  * are lit so adjacent cells do not repeat in lockstep.
  */
-export function makeCellTexture(style: 'brick' | 'concrete' | 'glass' | 'steel', variant: number): CellTextures {
+export function makeCellTexture(style: 'brick' | 'concrete' | 'glass' | 'steel', variant: number, repeat = false): CellTextures {
   const rng = createRng(500 + variant * 13 + style.length);
   const W = 256;
   const H = 148;
@@ -420,8 +420,9 @@ export function makeCellTexture(style: 'brick' | 'concrete' | 'glass' | 'steel',
   }
   const map = tex(c);
   const emissive = tex(ec);
-  map.wrapS = map.wrapT = THREE.ClampToEdgeWrapping;
-  emissive.wrapS = emissive.wrapT = THREE.ClampToEdgeWrapping;
+  const wrap = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+  map.wrapS = map.wrapT = wrap;
+  emissive.wrapS = emissive.wrapT = wrap;
   return { map, emissive };
 }
 

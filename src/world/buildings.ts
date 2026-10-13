@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RAPIER as R } from '../engine/physics';
 import { InstancedBatch } from './batch';
+import { RubbleField } from './rubble';
+import { StaticRegistry } from './statics';
 import { makeCellTexture, makeInteriorTexture, makeRawEdgeTexture, CRACKED_TINT } from './textures';
 import {
   Structure,
@@ -18,6 +20,7 @@ import {
   type ChunkSpec,
 } from '../logic/structure';
 import { createRng } from '../logic/rng';
+import { FAR_GRAIN } from '../logic/citylayout';
 
 export type DamageCause = 'ball' | 'rocket' | 'blast' | 'debris';
 
@@ -41,6 +44,9 @@ export interface Chunk {
   prevVel: THREE.Vector3;
   /** true when freshly spawned this frame (skip its first contact with its own building) */
   grace: number;
+  /** seconds spent nearly motionless (freezes into rubble when settled) */
+  still: number;
+  color: THREE.Color;
 }
 
 export interface CollapseEvent {
@@ -66,12 +72,27 @@ const _c = new THREE.Color();
 const _white = new THREE.Color(0xffffff);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const LEAN_RAD = 0.022;
-const CHUNK_LIFE = 8;
-const FRAGMENT_LIFE = 4.5;
+/** Longest a debris body simulates before it is frozen where it lies (it normally settles much sooner). */
+const CHUNK_LIFE = 30;
+const FRAGMENT_LIFE = 16;
+/** A chunk this slow for this long has settled and becomes permanent rubble. */
+const SETTLE_SPEED = 0.6;
+const SETTLE_TIME = 0.5;
+/** Rubble heap pieces added per frame after a collapse (spreads the cost; the dust hides the build-up). */
+const HEAP_PER_FRAME = 10;
 /** Most wall fragments thrown by one impact (keeps big hits cheap on phones). */
 const MAX_FRAGMENTS_PER_HIT = 7;
 
-type BatchKey = 'brick0' | 'brick1' | 'concrete0' | 'concrete1' | 'glass0' | 'glass1' | 'steel' | 'column' | 'steelcol' | 'slab';
+type FacadeKey = 'brick0' | 'brick1' | 'concrete0' | 'concrete1' | 'glass0' | 'glass1' | 'steel';
+/** `C` suffix = coarse sections on distant buildings (texture tiled to keep windows the right size). */
+type BatchKey = FacadeKey | `${FacadeKey}C` | 'column' | 'steelcol' | 'slab';
+
+interface HeapPiece {
+  pos: THREE.Vector3;
+  quat: THREE.Quaternion;
+  size: THREE.Vector3;
+  color: THREE.Color;
+}
 
 /**
  * Destructible downtown: structural model + physics colliders + instanced visuals + debris. Every facade panel, column and
@@ -92,6 +113,8 @@ export class DestructibleCity {
   private chunkBatch: InstancedBatch;
   private rng = createRng(913);
   private leaning = new Map<Structure, number | null>();
+  readonly rubble: RubbleField;
+  private heapQueue: HeapPiece[] = [];
   private materialColor: Record<CellMaterial, THREE.Color> = {
     glass: new THREE.Color(0x7fb2d8),
     brick: new THREE.Color(0x9a5d48),
@@ -102,28 +125,31 @@ export class DestructibleCity {
   };
   onDust?: (pos: THREE.Vector3, material: CellMaterial, count: number, speed: number) => void;
 
-  constructor(private world: RAPIER.World, specs: BuildingSpec[], envMap: THREE.Texture | null, maxChunks: number) {
+  constructor(private world: RAPIER.World, specs: BuildingSpec[], envMap: THREE.Texture | null, maxChunks: number, statics: StaticRegistry, rubbleCapacity: number) {
+    this.rubble = new RubbleField(world, statics, rubbleCapacity);
+    this.group.add(this.rubble.mesh);
     // Count cells per batch to size the instanced meshes.
     const counts = new Map<BatchKey, number>();
-    const keyFor = (cell: StructureCell, style: BuildingSpec['style']): BatchKey => {
+    const keyFor = (cell: StructureCell, spec: BuildingSpec): BatchKey => {
       if (cell.kind === 'slab') return 'slab';
       if (cell.kind === 'corner' || cell.kind === 'core') return cell.material === 'steel' ? 'steelcol' : 'column';
-      if (cell.material === 'steel') return 'steel';
+      const coarse = (spec.grain ?? 1) > 1 ? 'C' : '';
+      if (cell.material === 'steel') return `steel${coarse}` as BatchKey;
       const v = (cell.ix + cell.iy + cell.iz) % 2;
-      const base = cell.material === 'glass' ? 'glass' : style === 'brick' ? 'brick' : 'concrete';
-      return `${base}${v}` as BatchKey;
+      const base = cell.material === 'glass' ? 'glass' : spec.style === 'brick' ? 'brick' : 'concrete';
+      return `${base}${v}${coarse}` as BatchKey;
     };
     for (const spec of specs) {
       const s = new Structure(spec);
       this.structures.push(s);
       for (const c of s.cells) {
-        const k = keyFor(c, spec.style);
+        const k = keyFor(c, spec);
         counts.set(k, (counts.get(k) ?? 0) + 1);
       }
     }
     const interior = new THREE.MeshStandardMaterial({ map: makeInteriorTexture(), roughness: 0.95 });
-    const facadeMats = (style: 'brick' | 'concrete' | 'glass' | 'steel', variant: number): THREE.Material[] => {
-      const t = makeCellTexture(style, variant);
+    const facadeMats = (style: 'brick' | 'concrete' | 'glass' | 'steel', variant: number, repeat = false): THREE.Material[] => {
+      const t = makeCellTexture(style, variant, repeat);
       const edge = new THREE.MeshStandardMaterial({ map: makeRawEdgeTexture(style), roughness: 0.95 });
       const face = new THREE.MeshStandardMaterial({
         map: t.map,
@@ -139,9 +165,15 @@ export class DestructibleCity {
       return [edge, edge, edge, edge, face, interior];
     };
     const geo = new THREE.BoxGeometry(1, 1, 1);
+    // Coarse sections are FAR_GRAIN times the size: tile the outward (+z) face texture to match.
+    const coarseGeo = new THREE.BoxGeometry(1, 1, 1);
+    {
+      const uv = coarseGeo.attributes.uv as THREE.BufferAttribute;
+      for (let i = 16; i < 20; i++) uv.setXY(i, uv.getX(i) * FAR_GRAIN, uv.getY(i) * FAR_GRAIN);
+    }
     const mk = (key: BatchKey, mats: THREE.Material | THREE.Material[]) => {
       const cap = Math.max(1, counts.get(key) ?? 0);
-      const b = new InstancedBatch(geo, mats as THREE.Material, cap, true);
+      const b = new InstancedBatch(key.endsWith('C') ? coarseGeo : geo, mats as THREE.Material, cap, true);
       b.mesh.name = `cells-${key}`;
       this.batches.set(key, b);
       this.group.add(b.mesh);
@@ -153,6 +185,13 @@ export class DestructibleCity {
     mk('glass0', facadeMats('glass', 0));
     mk('glass1', facadeMats('glass', 1));
     mk('steel', facadeMats('steel', 0));
+    mk('brick0C', facadeMats('brick', 0, true));
+    mk('brick1C', facadeMats('brick', 1, true));
+    mk('concrete0C', facadeMats('concrete', 0, true));
+    mk('concrete1C', facadeMats('concrete', 1, true));
+    mk('glass0C', facadeMats('glass', 0, true));
+    mk('glass1C', facadeMats('glass', 1, true));
+    mk('steelC', facadeMats('steel', 0, true));
     mk('column', new THREE.MeshStandardMaterial({ map: makeRawEdgeTexture('concrete'), color: 0xcfc8bb, roughness: 0.9 }));
     mk('steelcol', new THREE.MeshStandardMaterial({ color: 0x4a5264, roughness: 0.45, metalness: 0.7, envMap }));
     mk('slab', new THREE.MeshStandardMaterial({ color: 0x8f8a80, roughness: 0.95 }));
@@ -162,7 +201,7 @@ export class DestructibleCity {
       const cols: (RAPIER.Collider | null)[] = [];
       const inst: { batch: InstancedBatch; index: number }[] = [];
       for (const c of s.cells) {
-        const key = keyFor(c, s.spec.style);
+        const key = keyFor(c, s.spec);
         const b = this.batches.get(key)!;
         this.cellMatrix(c, 0, 0, 0, _m);
         const index = b.add(_m, _white);
@@ -185,7 +224,7 @@ export class DestructibleCity {
       const body = this.world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(0, -500, 0).setCanSleep(true).setLinearDamping(0.05).setAngularDamping(0.8).setCcdEnabled(false));
       body.setEnabled(false);
       const index = this.chunkBatch.add(new THREE.Matrix4().makeScale(0, 0, 0), _white);
-      this.chunks.push({ body, collider: null, index, life: 0, budget: 0, source: -1, material: 'concrete', size: new THREE.Vector3(1, 1, 1), massEq: 40, prevVel: new THREE.Vector3(), grace: 0 });
+      this.chunks.push({ body, collider: null, index, life: 0, budget: 0, source: -1, material: 'concrete', size: new THREE.Vector3(1, 1, 1), massEq: 40, prevVel: new THREE.Vector3(), grace: 0, still: 0, color: new THREE.Color() });
     }
   }
 
@@ -372,6 +411,7 @@ export class DestructibleCity {
         let spawned = 0;
         for (const spec of specs) if (this.spawnChunk(spec, s.spec.id)) spawned++;
         this.onDust?.(_p.set(s.spec.x, collapse.y + 1, s.spec.z), s.cells[0]?.material ?? 'concrete', 60, 14);
+        this.queueHeap(s, collapse);
         events.push({ structure: s, collapse, cause, chain: cause === 'debris', chunks: spawned });
         this.refreshLean(s);
         collapse = s.evaluate();
@@ -435,10 +475,9 @@ export class DestructibleCity {
   private spawnChunk(spec: ChunkSpec, source: number, opts: { life?: number; budget?: number; spin?: number } = {}): boolean {
     let chunk = this.chunks.find((c) => c.life <= 0);
     if (!chunk) {
-      // Recycle the oldest live chunk so a huge collapse still reads.
-      chunk = this.chunks.reduce((a, b) => (a.life < b.life ? a : b));
-      if (chunk.life > CHUNK_LIFE * 0.6) return false;
-      this.retireChunk(chunk);
+      // Pool exhausted: freeze the slowest live chunk where it is (it stays as rubble) and reuse its body.
+      chunk = this.chunks.reduce((a, b) => (a.prevVel.lengthSq() < b.prevVel.lengthSq() ? a : b));
+      this.freezeChunk(chunk);
     }
     const body = chunk.body;
     if (chunk.collider) {
@@ -461,9 +500,10 @@ export class DestructibleCity {
     chunk.material = spec.material;
     chunk.massEq = 30 + Math.min(60, spec.sx * spec.sy * spec.sz * 0.12);
     chunk.grace = 0.25;
+    chunk.still = 0;
     chunk.prevVel.set(spec.vx, spec.vy, spec.vz);
-    _c.copy(this.materialColor[spec.material]).multiplyScalar(0.9);
-    this.chunkBatch.setColor(chunk.index, _c);
+    chunk.color.copy(this.materialColor[spec.material]).multiplyScalar(0.8 + this.rng.next() * 0.25);
+    this.chunkBatch.setColor(chunk.index, chunk.color);
     return true;
   }
 
@@ -476,6 +516,76 @@ export class DestructibleCity {
       this.world.removeCollider(chunk.collider, false);
       chunk.collider = null;
     }
+  }
+
+  /** Turns a debris body into permanent rubble at its current pose and returns the body to the pool. */
+  private freezeChunk(chunk: Chunk) {
+    if (chunk.life > 0) {
+      const t = chunk.body.translation();
+      if (t.y > -3) {
+        const r = chunk.body.rotation();
+        _p.set(t.x, t.y, t.z);
+        _q.set(r.x, r.y, r.z, r.w);
+        this.rubble.add(_p, _q, chunk.size, chunk.color, true);
+      }
+    }
+    this.retireChunk(chunk);
+  }
+
+  /**
+   * A collapse leaves a heap: a mound on the failure plane (on top of whatever still stands) plus spill into the street
+   * on the side the building leaned. Sized by the mass that came down. Built over a few frames from a queue.
+   */
+  private queueHeap(s: Structure, collapse: Collapse) {
+    const spec = s.spec;
+    const g = spec.grain ?? 1;
+    const fl = collapse.floorsDropped;
+    const dropH = fl * s.floorHeight;
+    const n = Math.max(18, Math.min(120, Math.round((dropH * spec.w * spec.d) / (350 * g))));
+    const H = Math.min(20, 2 + dropH * 0.22);
+    const base = collapse.y;
+    const facade = s.cells.find((c) => c.kind === 'facade')?.material ?? 'concrete';
+    let lean = collapse.lean;
+    if (Math.hypot(lean.x, lean.z) < 0.1) {
+      const a = this.rng.range(0, Math.PI * 2);
+      lean = { x: Math.cos(a), z: Math.sin(a) };
+    }
+    for (let i = 0; i < n; i++) {
+      const spill = this.rng.chance(0.32);
+      const sizeK = Math.sqrt(g);
+      const size = new THREE.Vector3(this.rng.range(1.6, 4.6) * sizeK, this.rng.range(0.8, 2.4) * sizeK, this.rng.range(1.6, 4.6) * sizeK);
+      let x: number;
+      let z: number;
+      let top: number;
+      let floor: number;
+      if (!spill) {
+        const u = this.rng.range(-1, 1);
+        const v = this.rng.range(-1, 1);
+        x = spec.x + u * spec.w * 0.46;
+        z = spec.z + v * spec.d * 0.46;
+        floor = base;
+        top = base + H * Math.max(0.15, 1 - (u * u + v * v) / 2) * this.rng.range(0.35, 1);
+      } else {
+        const dist = this.rng.range(Math.max(spec.w, spec.d) * 0.5, Math.max(spec.w, spec.d) * 0.5 + 4 + dropH * 0.3);
+        const side = this.rng.range(-0.5, 0.5) * Math.max(spec.w, spec.d);
+        x = spec.x + lean.x * dist - lean.z * side;
+        z = spec.z + lean.z * dist + lean.x * side;
+        floor = 0;
+        top = this.rng.range(0.6, Math.max(1.2, H * 0.45));
+        // Never bury a pile inside another standing building.
+        const other = this.structureAt(x, 1, z);
+        if (other && other !== s) continue;
+      }
+      const y = Math.max(floor + size.y * 0.35, top - size.y / 2);
+      const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.rng.range(-0.5, 0.5), this.rng.range(0, Math.PI), this.rng.range(-0.5, 0.5)));
+      const color = this.materialColor[this.rng.chance(0.6) ? facade : 'concrete'].clone().multiplyScalar(this.rng.range(0.7, 1));
+      this.heapQueue.push({ pos: new THREE.Vector3(x, y, z), quat, size, color });
+    }
+  }
+
+  /** Rubble heap pieces still waiting to be placed. */
+  get pendingHeap(): number {
+    return this.heapQueue.length;
   }
 
   /** A debris chunk struck a structure cell: deals debris damage within the chunk's remaining budget. */
@@ -503,10 +613,10 @@ export class DestructibleCity {
     return result ? { ref, result } : null;
   }
 
-  /** Performance governor: retire the oldest chunks down to `keep` live ones. */
+  /** Performance governor: freeze the slowest moving chunks into rubble until only `keep` are simulating. */
   trimChunks(keep: number) {
-    const live = this.chunks.filter((c) => c.life > 0).sort((a, b) => a.life - b.life);
-    for (let i = 0; i < live.length - keep; i++) this.retireChunk(live[i]);
+    const live = this.chunks.filter((c) => c.life > 0).sort((a, b) => a.prevVel.lengthSq() - b.prevVel.lengthSq());
+    for (let i = 0; i < live.length - keep; i++) this.freezeChunk(live[i]);
   }
 
   get activeChunks(): number {
@@ -530,17 +640,28 @@ export class DestructibleCity {
       c.life -= dt;
       if (c.grace > 0) c.grace -= dt;
       const t = c.body.translation();
-      if (c.life <= 0 || t.y < -30) {
+      if (t.y < -30) {
         this.retireChunk(c);
+        continue;
+      }
+      // Settled debris stays: once it has been nearly still for a moment it becomes permanent rubble.
+      const v = c.body.linvel();
+      const w = c.body.angvel();
+      const slow = c.body.isSleeping() || (v.x * v.x + v.y * v.y + v.z * v.z < SETTLE_SPEED * SETTLE_SPEED && w.x * w.x + w.y * w.y + w.z * w.z < 1);
+      c.still = slow ? c.still + dt : 0;
+      if (c.still > SETTLE_TIME || c.life <= 0) {
+        this.freezeChunk(c);
         continue;
       }
       const r = c.body.rotation();
       _p.set(t.x, t.y, t.z);
       _q.set(r.x, r.y, r.z, r.w);
-      const fade = c.life < 1 ? c.life : 1;
-      _s.copy(c.size).multiplyScalar(fade);
-      _m.compose(_p, _q, _s);
+      _m.compose(_p, _q, c.size);
       this.chunkBatch.set(c.index, _m);
+    }
+    for (let i = 0; i < HEAP_PER_FRAME && this.heapQueue.length; i++) {
+      const h = this.heapQueue.shift()!;
+      this.rubble.add(h.pos, h.quat, h.size, h.color, true);
     }
   }
 
@@ -620,5 +741,7 @@ export class DestructibleCity {
       }
     }
     for (const c of this.chunks) this.retireChunk(c);
+    this.heapQueue.length = 0;
+    this.rubble.clear();
   }
 }

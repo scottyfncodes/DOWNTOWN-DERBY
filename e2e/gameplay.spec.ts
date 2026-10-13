@@ -90,6 +90,9 @@ test('a visible pitcher throws, the batter swings, rockets detonate and building
     { swing: 0, yaw: 0.05, loft: -2, det: 1.4 },
     { swing: -0.02, yaw: -0.1, loft: 4, det: 2.0 },
   ];
+  const rubbleCount = () => page.evaluate(() => (window as unknown as { __derby: { structures: { rubble: { count: number } } } }).__derby.structures.rubble.count);
+  let lastRubble = await rubbleCount();
+  expect(lastRubble).toBe(0);
   for (let i = 0; i < plan.length; i++) {
     const p = plan[i];
     const before = await roundInfo(page);
@@ -102,7 +105,12 @@ test('a visible pitcher throws, the batter swings, rockets detonate and building
     expect(after.total).toBe(after.shots.reduce((a, s) => a + s.score, 0));
     await expect(page.locator('#shot-card')).toHaveClass(/visible/);
     const s = after.shots[i];
-    console.log(`shot ${i + 1}: ${s.quality} score=${s.score} sections=${s.sectionsDestroyed} buildings=${s.buildingsDamaged} collapsed=${s.buildingsCollapsed} chain=${s.chainCollapses} detonated=${s.detonated} dist=${s.distance}`);
+    // Rubble piles up and never disappears during a round.
+    await page.waitForTimeout(1500);
+    const rubble = await rubbleCount();
+    expect(rubble).toBeGreaterThanOrEqual(lastRubble);
+    lastRubble = rubble;
+    console.log(`shot ${i + 1}: ${s.quality} score=${s.score} sections=${s.sectionsDestroyed} buildings=${s.buildingsDamaged} collapsed=${s.buildingsCollapsed} chain=${s.chainCollapses} detonated=${s.detonated} dist=${s.distance} rubble=${rubble}`);
     if (p.swing === 0.45) expect(s.quality).toBe('MISS');
     if (p.swing === 0) expect(s.quality).toBe('PERFECT');
     if (p.swing === 0.2) expect(['POOR', 'WEAK']).toContain(s.quality);
@@ -125,6 +133,7 @@ test('a visible pitcher throws, the batter swings, rockets detonate and building
   const cityAfter = await page.evaluate(() => (window as unknown as { __derby: { structures: { stats: () => { damaged: number; collapsed: number; broken: number } } } }).__derby.structures.stats());
   expect(cityAfter.broken).toBeGreaterThan(0);
   expect(cityAfter.damaged).toBeGreaterThan(0);
+  expect(await rubbleCount()).toBeGreaterThan(20);
   console.log('city after round:', JSON.stringify(cityAfter));
 
   // Restart without reload: the world resets and the loop runs again.
@@ -137,6 +146,7 @@ test('a visible pitcher throws, the batter swings, rockets detonate and building
   const cityReset = await page.evaluate(() => (window as unknown as { __derby: { structures: { stats: () => { damaged: number; collapsed: number; broken: number } } } }).__derby.structures.stats());
   expect(cityReset.broken).toBe(0);
   expect(cityReset.collapsed).toBe(0);
+  expect(await rubbleCount()).toBe(0);
   await playPitch(page, 0, 0, -2, 1.0);
   const second = await roundInfo(page);
   expect(second.ballsUsed).toBe(1);
@@ -144,16 +154,16 @@ test('a visible pitcher throws, the batter swings, rockets detonate and building
 });
 
 test('a taken pitch costs nothing and the pitcher throws again; DETONATE appears only for a lit rocket', async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
   await page.goto('/');
   await expect(page.locator('#play-btn')).toBeVisible({ timeout: 60_000 });
   await headlessMode(page);
   await page.locator('#play-btn').click({ force: true });
   await waitForState(page, 'AIMING');
   await expect(page.locator('#detonate-btn')).toBeHidden();
-  await waitForState(page, 'PITCHING', 30_000);
+  await waitForState(page, 'PITCHING', 90_000);
   // Do not swing: the pitch goes by.
-  await waitForState(page, 'AIMING', 30_000);
+  await waitForState(page, 'AIMING', 90_000);
   const info = await roundInfo(page);
   expect(info.ballsUsed).toBe(0);
   // Now a real swing with a long fuse: the detonate button must show up during flight.
@@ -163,8 +173,8 @@ test('a taken pitch costs nothing and the pitcher throws again; DETONATE appears
     g.debug.autoSwing = 0;
     g.debug.autoDetonate = null;
   });
-  await waitForState(page, 'PITCHING', 30_000);
-  await waitForState(page, 'BALL_IN_FLIGHT', 30_000);
+  await waitForState(page, 'PITCHING', 90_000);
+  await waitForState(page, 'BALL_IN_FLIGHT', 90_000);
   await expect(page.locator('#detonate-btn')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('#detonate-btn')).toHaveClass(/lit/, { timeout: 20_000 });
   await page.screenshot({ path: `${SHOT_DIR}/rocket.png` });

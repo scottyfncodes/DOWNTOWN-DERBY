@@ -135,9 +135,10 @@ export class Game {
     this.physics = new PhysicsWorld();
     const env = this.renderer.envMap;
     this.props = new PropManager(this.physics.world, env, quality);
-    const city = buildCity(this.renderer.scene, this.physics.world, this.props, this.statics, env, quality.chunks);
+    const city = buildCity(this.renderer.scene, this.physics.world, this.props, this.statics, env, quality.chunks, quality.rubble);
     this.structures = city.destructible;
     this.structures.onDust = (pos, material, count, speed) => this.particles.burst(pos, material as MaterialKind, count, speed);
+    this.props.onDebrisSettle = (pos, quat, size, color) => this.structures.rubble.add(pos, quat, size, color, false);
     const roof = buildRooftop(this.renderer.scene, this.physics.world, this.statics, env);
     const mound = buildPitcherMound(this.renderer.scene, this.physics.world, this.statics, env);
     this.batter = roof.batter;

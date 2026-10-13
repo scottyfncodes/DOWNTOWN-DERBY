@@ -52,6 +52,8 @@ const _m2 = new THREE.Matrix4();
 const _p = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3(1, 1, 1);
+const _debrisSize = new THREE.Vector3(0.6, 0.6, 0.6);
+const _debrisColor = new THREE.Color(0x8f6a45);
 
 export class PropManager {
   readonly props: Prop[] = [];
@@ -67,6 +69,8 @@ export class PropManager {
   bonusProp: Prop | null = null;
   private bonusBeacon: THREE.Group | null = null;
   onBeacon?: (pos: THREE.Vector3) => void;
+  /** Called when a small debris piece comes to rest so the caller can keep it as permanent rubble. */
+  onDebrisSettle?: (pos: THREE.Vector3, quat: THREE.Quaternion, size: THREE.Vector3, color: THREE.Color) => void;
 
   constructor(private world: RAPIER.World, envMap: THREE.Texture | null, private quality: { fragments: number }) {
     const std = (color: number, rough = 0.6, metal = 0.1, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
@@ -484,7 +488,7 @@ export class PropManager {
     for (const d of this.debris) {
       if (spawned >= count) break;
       if (d.life > 0) continue;
-      d.life = 4;
+      d.life = 8;
       d.body.setEnabled(true);
       d.body.setTranslation({ x: center.x + (this.rng.next() - 0.5) * 0.8, y: center.y + this.rng.next() * 0.6, z: center.z + (this.rng.next() - 0.5) * 0.8 }, true);
       d.body.setLinvel({ x: impulse.x * 0.03 + (this.rng.next() - 0.5) * 4, y: 3 + this.rng.next() * 4, z: impulse.z * 0.03 + (this.rng.next() - 0.5) * 4 }, true);
@@ -549,13 +553,18 @@ export class PropManager {
       const r = d.body.rotation();
       _p.set(t.x, t.y, t.z);
       _q.set(r.x, r.y, r.z, r.w);
-      const fade = Math.min(1, d.life);
-      _m.compose(_p, _q, new THREE.Vector3(fade, fade, fade));
-      d.part.batch.set(d.part.index, _m.multiply(d.part.local));
-      if (d.life <= 0) {
+      const v = d.body.linvel();
+      const settled = d.body.isSleeping() || (d.life < 7 && v.x * v.x + v.y * v.y + v.z * v.z < 0.25);
+      if (settled || d.life <= 0) {
+        // It stays: hand it over as permanent rubble and free the body.
+        if (t.y > -3) this.onDebrisSettle?.(_p, _q, _debrisSize, _debrisColor);
+        d.life = 0;
         d.body.setEnabled(false);
         d.part.batch.hide(d.part.index);
+        continue;
       }
+      _m.compose(_p, _q, _s);
+      d.part.batch.set(d.part.index, _m.multiply(d.part.local));
     }
     if (this.bonusBeacon && this.bonusBeacon.visible) {
       const ring = this.bonusBeacon.getObjectByName('ring');
