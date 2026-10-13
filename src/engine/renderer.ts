@@ -7,17 +7,40 @@ export interface Quality {
   shadowSize: number;
   fragments: number;
   particles: number;
+  /** pooled rigid-body debris chunks for building collapses */
+  chunks: number;
+  /** software / very weak GPU: no shadows, fewer effects */
+  lowSpec: boolean;
+}
+
+/** Reads the GPU renderer string (software renderers like SwiftShader/llvmpipe get the low-spec profile). */
+function rendererString(): string {
+  try {
+    const c = document.createElement('canvas');
+    const gl = (c.getContext('webgl2') ?? c.getContext('webgl')) as WebGLRenderingContext | null;
+    if (!gl) return '';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const s = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return s;
+  } catch {
+    return '';
+  }
 }
 
 export function detectQuality(): Quality {
   const mobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1100);
-  const dpr = Math.min(window.devicePixelRatio || 1, mobile ? 2 : 2);
+  const gpu = rendererString();
+  const lowSpec = /SwiftShader|llvmpipe|Software|Mesa OffScreen/i.test(gpu) || (typeof navigator.hardwareConcurrency === 'number' && navigator.hardwareConcurrency <= 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, lowSpec ? 1 : 2);
   return {
     pixelRatio: dpr,
-    shadows: true,
+    shadows: !lowSpec,
     shadowSize: mobile ? 1024 : 2048,
     fragments: mobile ? 160 : 320,
-    particles: mobile ? 300 : 600,
+    particles: lowSpec ? 300 : mobile ? 420 : 800,
+    chunks: lowSpec ? 24 : mobile ? 28 : 40,
+    lowSpec,
   };
 }
 
@@ -30,6 +53,8 @@ export class Renderer {
   private clouds: THREE.Sprite[] = [];
   private frameTimes: number[] = [];
   private scale = 1;
+  /** rolling average frame cost in ms (updated every 90 frames) */
+  lastAvgMs = 0;
   envMap: THREE.Texture | null = null;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality) {
@@ -141,6 +166,7 @@ export class Renderer {
     this.frameTimes.push(ms);
     if (this.frameTimes.length < 90) return;
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
+    this.lastAvgMs = avg;
     this.frameTimes.length = 0;
     if (avg > 26 && this.scale > 0.6) {
       this.scale = Math.max(0.6, this.scale - 0.15);

@@ -133,5 +133,6 @@ describe('ShotScorer', () => {
   it('credits grow with score', () => {
     expect(creditsForRound(0, 1, 0)).toBe(25);
     expect(creditsForRound(20000, 3, 2)).toBeGreaterThan(creditsForRound(5000, 1, 0));
+    expect(creditsForRound(20000, 3, 2, 2)).toBe(creditsForRound(20000, 3, 2) + 120);
   });
 });

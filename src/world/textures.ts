@@ -254,31 +254,218 @@ export function makeFenceTexture(): THREE.CanvasTexture {
   return t;
 }
 
+/**
+ * Equirectangular baseball texture: cream leather with the two red horseshoe seams traced from the classic parametric seam
+ * curve, so when the sphere really rotates the seams sweep across its face and the spin axis is unmistakable.
+ */
 export function makeBallTexture(): THREE.CanvasTexture {
-  const { c, g } = canvas(256, 128);
-  g.fillStyle = '#fff6e6';
-  g.fillRect(0, 0, 256, 128);
-  g.strokeStyle = '#d2322d';
-  g.lineWidth = 3;
-  const stitch = (cx: number) => {
+  const W = 512;
+  const H = 256;
+  const { c, g } = canvas(W, H);
+  g.fillStyle = '#fbf3e4';
+  g.fillRect(0, 0, W, H);
+  // leather grain
+  const rng = createRng(31);
+  for (let i = 0; i < 1600; i++) {
+    g.fillStyle = `rgba(120,90,60,${0.03 + rng.next() * 0.05})`;
+    g.fillRect(rng.int(0, W), rng.int(0, H), 2, 2);
+  }
+  const alpha = 0.42;
+  const pts: { u: number; v: number }[] = [];
+  const N = 720;
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    const phi = Math.PI / 2 - (Math.PI / 2 - alpha) * Math.cos(t);
+    const theta = t / 2 + alpha * Math.sin(2 * t);
+    const x = Math.sin(phi) * Math.cos(theta);
+    const y = Math.sin(phi) * Math.sin(theta);
+    const z = Math.cos(phi);
+    const u = (Math.atan2(z, x) / (Math.PI * 2) + 0.5) * W;
+    const v = (Math.acos(Math.max(-1, Math.min(1, y))) / Math.PI) * H;
+    pts.push({ u, v });
+  }
+  const drawSeam = (width: number, color: string) => {
+    g.strokeStyle = color;
+    g.lineWidth = width;
+    g.lineCap = 'round';
     g.beginPath();
-    g.moveTo(cx, 0);
-    g.bezierCurveTo(cx + 40, 40, cx + 40, 88, cx, 128);
-    g.stroke();
-    for (let i = 0; i < 9; i++) {
-      const t = (i + 0.5) / 9;
-      const x = cx + 30 * Math.sin(t * Math.PI);
-      const y = t * 128;
-      g.beginPath();
-      g.moveTo(x - 5, y - 4);
-      g.lineTo(x + 5, y + 4);
-      g.stroke();
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const q = pts[Math.max(0, i - 1)];
+      if (i === 0 || Math.abs(p.u - q.u) > W / 2) g.moveTo(p.u, p.v);
+      else g.lineTo(p.u, p.v);
     }
+    g.stroke();
   };
-  stitch(64);
-  stitch(192);
+  drawSeam(9, 'rgba(120,40,30,0.35)');
+  drawSeam(5, '#c8322b');
+  // stitches: short red dashes across the seam
+  g.strokeStyle = '#a7261f';
+  g.lineWidth = 2.2;
+  for (let i = 0; i < pts.length - 8; i += 9) {
+    const p = pts[i];
+    const q = pts[i + 4];
+    if (Math.abs(p.u - q.u) > W / 2) continue;
+    const dx = q.u - p.u;
+    const dy = q.v - p.v;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * 7;
+    const ny = (dx / len) * 7;
+    g.beginPath();
+    g.moveTo(p.u - nx, p.v - ny);
+    g.lineTo(p.u + nx, p.v + ny);
+    g.stroke();
+  }
+  const t = tex(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
+export interface CellTextures {
+  map: THREE.CanvasTexture;
+  emissive: THREE.CanvasTexture;
+}
+
+/**
+ * One modular facade cell (about 8.4 m x 4.8 m): two or three windows and a floor band. `variant` changes which windows
+ * are lit so adjacent cells do not repeat in lockstep.
+ */
+export function makeCellTexture(style: 'brick' | 'concrete' | 'glass' | 'steel', variant: number): CellTextures {
+  const rng = createRng(500 + variant * 13 + style.length);
+  const W = 256;
+  const H = 148;
+  const { c, g } = canvas(W, H);
+  const { c: ec, g: eg } = canvas(W, H);
+  eg.fillStyle = '#000';
+  eg.fillRect(0, 0, W, H);
+  if (style === 'glass') {
+    g.fillStyle = '#5d86a8';
+    g.fillRect(0, 0, W, H);
+    for (let y = 0; y < H; y += 2) {
+      g.fillStyle = `rgba(255,255,255,${0.03 + 0.04 * Math.sin(y * 0.11 + variant)})`;
+      g.fillRect(0, y, W, 1);
+    }
+    g.fillStyle = 'rgba(20,30,45,0.55)';
+    g.fillRect(0, H * 0.74, W, H * 0.26);
+    g.fillStyle = '#1f2c3d';
+    for (let x = 0; x <= 3; x++) g.fillRect((x * W) / 3 - 3, 0, 6, H);
+    g.fillRect(0, 0, W, 5);
+    g.fillRect(0, H - 5, W, 5);
+    g.fillRect(0, H * 0.74 - 2, W, 4);
+    for (let x = 0; x < 3; x++) {
+      if (rng.chance(0.4)) {
+        eg.fillStyle = rng.chance(0.7) ? `rgba(255,${200 + rng.int(0, 40)},${120 + rng.int(0, 60)},${0.5 + rng.next() * 0.5})` : `rgba(180,220,255,${0.4 + rng.next() * 0.5})`;
+        eg.fillRect((x * W) / 3 + 6, 6, W / 3 - 12, H * 0.74 - 12);
+      }
+    }
+  } else if (style === 'steel') {
+    g.fillStyle = '#2d3444';
+    g.fillRect(0, 0, W, H);
+    for (let y = 0; y < H; y += 6) {
+      g.fillStyle = `rgba(255,255,255,${0.04 + 0.03 * ((y / 6) % 2)})`;
+      g.fillRect(0, y, W, 3);
+    }
+    g.fillStyle = '#1a1f2b';
+    g.fillRect(0, 0, W, 6);
+    g.fillRect(0, H - 6, W, 6);
+    for (let x = 0; x <= 2; x++) g.fillRect((x * W) / 2 - 2, 0, 4, H);
+    // vents
+    g.fillStyle = 'rgba(0,0,0,0.35)';
+    for (let i = 0; i < 2; i++) g.fillRect(W * 0.12 + i * W * 0.5, H * 0.35, W * 0.26, H * 0.3);
+    g.fillStyle = 'rgba(255,255,255,0.08)';
+    for (let i = 0; i < 2; i++) for (let y = 0; y < 5; y++) g.fillRect(W * 0.12 + i * W * 0.5, H * 0.35 + y * (H * 0.06), W * 0.26, 2);
+  } else {
+    const base = style === 'brick' ? '#9a5d48' : '#b8ad9c';
+    g.fillStyle = base;
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 1200; i++) {
+      g.fillStyle = `rgba(${rng.chance(0.5) ? 255 : 0},${rng.chance(0.5) ? 255 : 0},${rng.chance(0.5) ? 255 : 0},0.045)`;
+      g.fillRect(rng.int(0, W), rng.int(0, H), 2, 2);
+    }
+    if (style === 'brick') {
+      g.fillStyle = 'rgba(60,30,20,0.38)';
+      for (let y = 0; y < H; y += 7) {
+        g.fillRect(0, y, W, 1);
+        const off = (y / 7) % 2 === 0 ? 0 : 8;
+        for (let x = off; x < W; x += 16) g.fillRect(x, y, 1, 7);
+      }
+    }
+    // floor band
+    g.fillStyle = 'rgba(0,0,0,0.14)';
+    g.fillRect(0, H - 9, W, 9);
+    g.fillStyle = 'rgba(255,255,255,0.12)';
+    g.fillRect(0, H - 10, W, 2);
+    const cols = 2;
+    for (let x = 0; x < cols; x++) {
+      const wx = (x * W) / cols + W * 0.1;
+      const ww = W / cols - W * 0.2;
+      const wy = H * 0.16;
+      const wh = H * 0.58;
+      g.fillStyle = 'rgba(40,36,34,0.92)';
+      g.fillRect(wx - 4, wy - 4, ww + 8, wh + 8);
+      g.fillStyle = `rgb(${40 + rng.int(0, 30)},${56 + rng.int(0, 30)},${80 + rng.int(0, 30)})`;
+      g.fillRect(wx, wy, ww, wh);
+      g.fillStyle = 'rgba(255,255,255,0.2)';
+      g.fillRect(wx, wy, ww * 0.45, wh * 0.4);
+      g.fillStyle = 'rgba(0,0,0,0.5)';
+      g.fillRect(wx + ww / 2 - 2, wy, 4, wh);
+      g.fillStyle = 'rgba(255,255,255,0.25)';
+      g.fillRect(wx - 6, wy + wh + 3, ww + 12, 4);
+      if (rng.chance(0.42)) {
+        eg.fillStyle = `rgba(255,${190 + rng.int(0, 50)},${110 + rng.int(0, 60)},${0.6 + rng.next() * 0.4})`;
+        eg.fillRect(wx, wy, ww, wh);
+      }
+    }
+  }
+  const map = tex(c);
+  const emissive = tex(ec);
+  map.wrapS = map.wrapT = THREE.ClampToEdgeWrapping;
+  emissive.wrapS = emissive.wrapT = THREE.ClampToEdgeWrapping;
+  return { map, emissive };
+}
+
+/** Dim office interior seen through a breached facade: plaster, a dark window on the far wall, ceiling line. */
+export function makeInteriorTexture(): THREE.CanvasTexture {
+  const { c, g } = canvas(128, 96);
+  g.fillStyle = '#4a4038';
+  g.fillRect(0, 0, 128, 96);
+  g.fillStyle = 'rgba(0,0,0,0.35)';
+  g.fillRect(0, 0, 128, 10);
+  g.fillRect(0, 86, 128, 10);
+  g.fillStyle = '#2a2f3a';
+  g.fillRect(24, 24, 36, 40);
+  g.fillRect(70, 24, 36, 40);
+  g.fillStyle = 'rgba(255,255,255,0.08)';
+  for (let i = 0; i < 128; i += 16) g.fillRect(i, 10, 1, 76);
+  const t = tex(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
+/** Raw broken edge of a wall: rubble-coloured with cracks. */
+export function makeRawEdgeTexture(style: 'brick' | 'concrete' | 'glass' | 'steel'): THREE.CanvasTexture {
+  const rng = createRng(77 + style.length);
+  const { c, g } = canvas(64, 64);
+  g.fillStyle = style === 'brick' ? '#7d4a3a' : style === 'steel' ? '#3a4150' : '#8d867c';
+  g.fillRect(0, 0, 64, 64);
+  for (let i = 0; i < 400; i++) {
+    g.fillStyle = `rgba(0,0,0,${rng.next() * 0.25})`;
+    g.fillRect(rng.int(0, 64), rng.int(0, 64), 2, 2);
+  }
+  g.strokeStyle = 'rgba(0,0,0,0.4)';
+  g.lineWidth = 1.5;
+  for (let i = 0; i < 5; i++) {
+    g.beginPath();
+    g.moveTo(rng.int(0, 64), rng.int(0, 64));
+    g.lineTo(rng.int(0, 64), rng.int(0, 64));
+    g.stroke();
+  }
   return tex(c);
 }
+
+/** Cracked overlay colours used to tint damaged cells (instance colour). */
+export const CRACKED_TINT = 0x8a7a6a;
 
 export function makeSkyTexture(): THREE.CanvasTexture {
   const { c, g } = canvas(4, 512);

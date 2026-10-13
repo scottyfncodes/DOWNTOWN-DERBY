@@ -3,7 +3,7 @@ export type GameState =
   | 'TITLE'
   | 'READY'
   | 'AIMING'
-  | 'WINDING'
+  | 'PITCHING'
   | 'SWINGING'
   | 'BALL_IN_FLIGHT'
   | 'SHOT_RESOLVING'
@@ -30,6 +30,11 @@ export type MaterialKind =
   | 'scaffold'
   | 'antenna'
   | 'concrete'
+  | 'brick'
+  | 'steel'
+  | 'slab'
+  | 'column'
+  | 'rubble'
   | 'ground'
   | 'roof'
   | 'cage';
@@ -105,7 +110,7 @@ export interface ImpactEvent {
 export interface ScoreLine {
   label: string;
   points: number;
-  kind: 'impact' | 'bonus' | 'combo' | 'distance' | 'contact' | 'chain';
+  kind: 'impact' | 'bonus' | 'combo' | 'distance' | 'contact' | 'chain' | 'structure' | 'collapse' | 'detonation';
   material?: MaterialKind;
   position?: Vec3;
   combo?: number;
@@ -121,6 +126,16 @@ export interface ShotSummary {
   glassBroken: number;
   lines: ScoreLine[];
   uniqueMaterials: number;
+  /** destructible building sections broken (facade cells, slabs, columns) */
+  sectionsDestroyed: number;
+  /** distinct destructible buildings damaged */
+  buildingsDamaged: number;
+  /** buildings that lost at least one floor to structural collapse */
+  buildingsCollapsed: number;
+  /** collapses triggered by debris from another collapse */
+  chainCollapses: number;
+  /** the rocket was detonated by the player (or self-destructed) */
+  detonated: boolean;
 }
 
 export interface RoundSummary {
@@ -131,6 +146,9 @@ export interface RoundSummary {
   objectsDamaged: number;
   glassBroken: number;
   perfectContacts: number;
+  sectionsDestroyed: number;
+  buildingsCollapsed: number;
+  chainCollapses: number;
   shots: ShotSummary[];
   isRecord: boolean;
   previousBest: number;

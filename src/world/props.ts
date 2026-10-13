@@ -37,6 +37,8 @@ export interface Prop {
   color?: THREE.Color;
   /** velocity captured before the last physics step (dynamic props only) */
   prevVel: THREE.Vector3;
+  /** cached body type so per-frame loops avoid a WASM call per prop */
+  dynamic: boolean;
 }
 
 export interface HitOutcome {
@@ -132,9 +134,9 @@ export class PropManager {
     batch('scaffold', this.geos.cylLow, this.mats.scaffold, 600, false);
     batch('plank', this.geos.box, this.mats.plank, 120);
     batch('glass', this.geos.box, this.mats.glass, 1500, false);
-    batch('debris', this.geos.box, this.mats.debris, 24);
+    batch('debris', this.geos.box, this.mats.debris, 40);
     batch('billboardBack', this.geos.box, this.mats.darkMetal, 120);
-    for (let i = 0; i < 20; i++) this.makeDebris();
+    for (let i = 0; i < 36; i++) this.makeDebris();
   }
 
   private batch(key: string): InstancedBatch {
@@ -170,6 +172,7 @@ export class PropManager {
       removed: false,
       hits: 0,
       prevVel: new THREE.Vector3(),
+      dynamic,
     };
     this.byBody.set(body.handle, prop);
     this.props.push(prop);
@@ -411,6 +414,7 @@ export class PropManager {
     if (isFixed) {
       if (prop.detachSpeed > 0 && speed >= prop.detachSpeed) {
         prop.body.setBodyType(R.RigidBodyType.Dynamic, true);
+        prop.dynamic = true;
         prop.body.applyImpulseAtPoint({ x: impulse.x, y: impulse.y + Math.abs(impulse.length()) * 0.15, z: impulse.z }, point, true);
         prop.state = 'destroyed';
         return { destroyed: wasIntact, effect: 'detach' };
@@ -516,9 +520,9 @@ export class PropManager {
   update(dt: number, elapsed: number) {
     // Dynamic props: sync visuals with awake bodies.
     for (const prop of this.props) {
-      if (prop.removed) continue;
+      if (prop.removed || !prop.dynamic) continue;
       const body = prop.body;
-      if (body.bodyType() !== R.RigidBodyType.Dynamic || body.isSleeping()) continue;
+      if (body.isSleeping()) continue;
       const t = body.translation();
       const r = body.rotation();
       _p.set(t.x, t.y, t.z);
@@ -565,12 +569,37 @@ export class PropManager {
     }
   }
 
+  /** Props whose anchor sits inside the box and above `minY` (e.g. everything on a collapsing building's roof). */
+  propsInBox(minX: number, maxX: number, minZ: number, maxZ: number, minY: number): Prop[] {
+    const out: Prop[] = [];
+    for (const p of this.props) {
+      if (p.removed) continue;
+      const t = p.body.translation();
+      if (t.x < minX || t.x > maxX || t.z < minZ || t.z > maxZ || t.y < minY) continue;
+      out.push(p);
+    }
+    return out;
+  }
+
+  /** Frees a fixed prop so it falls (the surface under it is gone). Marks it destroyed for scoring on landing. */
+  detach(prop: Prop, kick: THREE.Vector3): boolean {
+    if (prop.removed) return false;
+    const body = prop.body;
+    if (body.bodyType() === R.RigidBodyType.Fixed) body.setBodyType(R.RigidBodyType.Dynamic, true);
+    prop.dynamic = true;
+    body.wakeUp();
+    body.applyImpulse({ x: kick.x * body.mass(), y: kick.y * body.mass(), z: kick.z * body.mass() }, true);
+    if (prop.state === 'intact') prop.state = 'damaged';
+    return true;
+  }
+
   /** Restores every prop to its initial state. */
   reset() {
     for (const prop of this.props) {
       const body = prop.body;
       body.setEnabled(true);
-      if (body.bodyType() === R.RigidBodyType.Dynamic && !prop.initialDynamic) body.setBodyType(R.RigidBodyType.Fixed, false);
+      if (prop.dynamic && !prop.initialDynamic) body.setBodyType(R.RigidBodyType.Fixed, false);
+      prop.dynamic = prop.initialDynamic;
       const p = prop.initialPos;
       const q = prop.initialRot;
       body.setTranslation({ x: p.x, y: p.y, z: p.z }, false);
@@ -607,7 +636,7 @@ export class PropManager {
     for (const prop of this.props) {
       if (prop.removed) continue;
       const body = prop.body;
-      if (body.bodyType() !== R.RigidBodyType.Dynamic || body.isSleeping()) {
+      if (!prop.dynamic || body.isSleeping()) {
         prop.prevVel.set(0, 0, 0);
         continue;
       }
@@ -619,7 +648,7 @@ export class PropManager {
   /** Count of awake dynamic bodies (for resolve heuristics / perf). */
   awakeCount(): number {
     let n = 0;
-    for (const prop of this.props) if (!prop.removed && prop.body.bodyType() === R.RigidBodyType.Dynamic && !prop.body.isSleeping()) n++;
+    for (const prop of this.props) if (!prop.removed && prop.dynamic && !prop.body.isSleeping()) n++;
     return n;
   }
 

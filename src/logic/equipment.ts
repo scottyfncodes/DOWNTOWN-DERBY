@@ -163,3 +163,5 @@ export function getBat(id: string): BatSpec {
 export function getBall(id: string): BallSpec {
   return BALLS.find((b) => b.id === id) ?? BALLS[0];
 }
+
+export { ROCKETS, getRocket, type RocketSpec } from './rocket';

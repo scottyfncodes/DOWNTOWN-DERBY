@@ -6,8 +6,8 @@ const TRANSITIONS: Record<GameState, GameState[]> = {
   BOOT: ['TITLE'],
   TITLE: ['READY', 'GARAGE', 'CHALLENGES', 'SETTINGS'],
   READY: ['AIMING', 'TITLE', 'SETTINGS'],
-  AIMING: ['WINDING', 'READY', 'TITLE', 'SETTINGS'],
-  WINDING: ['SWINGING', 'AIMING'],
+  AIMING: ['PITCHING', 'READY', 'TITLE', 'SETTINGS'],
+  PITCHING: ['SWINGING', 'AIMING', 'TITLE', 'SETTINGS'],
   SWINGING: ['BALL_IN_FLIGHT'],
   BALL_IN_FLIGHT: ['SHOT_RESOLVING'],
   SHOT_RESOLVING: ['SHOT_RESULTS'],
@@ -65,14 +65,20 @@ export class RoundManager {
     for (const l of this.listeners) l('READY', prev);
   }
 
-  /** The bat connected (or whiffed); the ball counter increments exactly once here. */
+  /** The bat was swung at a live pitch (contact or whiff); the ball counter increments exactly once here. */
   commitSwing(): boolean {
-    if (this.state !== 'WINDING') return false;
+    if (this.state !== 'PITCHING') return false;
     if (this.ballsUsed >= BALLS_PER_ROUND) return false;
     this.ballsUsed++;
     this.state = 'SWINGING';
-    for (const l of this.listeners) l('SWINGING', 'WINDING');
+    for (const l of this.listeners) l('SWINGING', 'PITCHING');
     return true;
+  }
+
+  /** The pitch went by without a swing: back to the wind-up, no ball consumed. */
+  takePitch(): boolean {
+    if (this.state !== 'PITCHING') return false;
+    return this.transition('AIMING');
   }
 
   /** Records the resolved shot. Returns false if one was already recorded for this swing. */
@@ -107,6 +113,9 @@ export class RoundManager {
       objectsDamaged: this.shots.reduce((a, s) => a + s.objectsDamaged, 0),
       glassBroken: this.shots.reduce((a, s) => a + s.glassBroken, 0),
       perfectContacts: this.shots.filter((s) => s.quality === 'PERFECT').length,
+      sectionsDestroyed: this.shots.reduce((a, s) => a + s.sectionsDestroyed, 0),
+      buildingsCollapsed: this.shots.reduce((a, s) => a + s.buildingsCollapsed, 0),
+      chainCollapses: this.shots.reduce((a, s) => a + s.chainCollapses, 0),
       shots: this.shots.slice(),
       isRecord: total > previousBest,
       previousBest,
