@@ -8,7 +8,7 @@ import { PropManager, type Prop } from '../world/props';
 import { StaticRegistry } from '../world/statics';
 import { buildCity, pickBonusTarget } from '../world/city';
 import { buildRooftop, TEE_POS, type BatterRig } from '../world/rooftop';
-import { buildPitcherMound, RELEASE_POS, type PitcherRig, type PitcherPhase } from '../world/pitcher';
+import { buildPitcherMound, RELEASE_POS, DECK_BOX, type PitcherRig, type PitcherPhase } from '../world/pitcher';
 import type { DestructibleCity, CollapseEvent, CellRef } from '../world/buildings';
 import { Ball, SPIN_COLORS } from './Ball';
 import { UI, qualityCallout } from '../ui/ui';
@@ -21,7 +21,7 @@ import { getBat, getBall, getRocket } from '../logic/equipment';
 import { ProfileStore } from '../logic/progression';
 import { getChallenge } from '../logic/challenges';
 import { createRng } from '../logic/rng';
-import type { Structure, DamageResult, CellMaterial } from '../logic/structure';
+import { impactCrater, type Structure, type DamageResult, type CellMaterial } from '../logic/structure';
 import type { AimSettings, ContactResult, ScoreLine, MaterialKind, ImpactEvent } from '../logic/types';
 
 const WINDUP_DURATION = 0.8;
@@ -123,6 +123,7 @@ export class Game {
   private slowRocketTimer = 0;
   private exhaustAcc = 0;
   private roundDemolished = 0;
+  private deckSmashed = false;
   ready = false;
 
   constructor(private canvas: HTMLCanvasElement, private uiRoot: HTMLElement) {}
@@ -422,6 +423,7 @@ export class Game {
     const bat = getBat(this.store.profile.equippedBat);
     const ballSpec = getBall(this.store.profile.equippedBall);
     this.scorer = new ShotScorer({ impactMultiplier: bat.impact * ballSpec.impact });
+    this.deckSmashed = false;
     this.round.transition('BALL_IN_FLIGHT');
     this.simTime = 0;
     this.lastWorldEvent = -Infinity;
@@ -691,24 +693,44 @@ export class Game {
     const speed = prev.length();
     const lit = this.rocket.lit;
     const penetrator = lit ? this.rocket.spec.penetration : 1;
-    const res = this.structures.projectileHit(handle, speed, this.ball.mass, penetrator, lit ? 0.45 : 0, lit ? 'rocket' : 'ball');
+    // The crater (how big a chunk comes out) is set by the quality of contact, the ball's speed and its mass.
+    const quality = this.contact?.quality ?? 'POOR';
+    const crater = impactCrater(quality, speed, this.ball.mass, penetrator);
+    _v3.copy(prev);
+    if (_v3.lengthSq() > 1e-6) _v3.normalize();
+    const res = this.structures.projectileHit(handle, crater, lit ? 'rocket' : 'ball', this.ball.pos, _v3, speed);
     if (!res) return;
     const now = this.simTime;
     const cell = ref.cell;
-    const s = ref.structure;
-    this.changed.add(s);
+    this.changed.add(ref.structure);
+    for (const r of res.craterResults) this.changed.add(this.structures.structures[r.cell.building]);
     this.lastWorldEvent = now;
     const main = res.result;
+    let popups = 0;
+    let brokenCount = main.broke ? 1 : 0;
     if (main.broke || main.cracked) {
       const line = this.scorer?.structureHit(cell.building, cell.id, cell.material, main.broke ? 'broken' : 'cracked', true, now, { x: cell.x, y: cell.y, z: cell.z }) ?? null;
-      this.cellFeedback(ref, main, speed, line, true);
+      this.cellFeedback(ref, main, speed, line, true, true);
+      popups++;
     } else if (speed > 6) {
       this.particles.burst(this.ball.pos, cell.material as MaterialKind, 5, 4);
       this.audio.impact(cell.material as MaterialKind, speed, false);
     }
-    for (const r of res.splashResults) {
+    for (const r of res.craterResults) {
+      if (r.broke) brokenCount++;
       const line = this.scorer?.structureHit(r.cell.building, r.cell.id, r.cell.material, r.broke ? 'broken' : 'cracked', true, now, { x: r.cell.x, y: r.cell.y, z: r.cell.z }) ?? null;
-      this.cellFeedback({ structure: s, cell: r.cell }, r, speed * 0.6, line, true);
+      this.cellFeedback({ structure: this.structures.structures[r.cell.building], cell: r.cell }, r, speed * 0.7, line, true, popups < 3);
+      if (line) popups++;
+    }
+    if (brokenCount >= 5) {
+      // A big bite out of the building: a beat of weight on the hit.
+      this.camera.kick(Math.min(0.9, 0.3 + brokenCount * 0.05));
+      this.freezeUntil = Math.max(this.freezeUntil, performance.now() + Math.min(90, 30 + brokenCount * 5));
+      this.haptic(Math.min(45, 15 + brokenCount * 2));
+      if (brokenCount >= 8 && this.bigEventCooldown <= 0) {
+        this.ui.showCallout(brokenCount >= 14 ? 'HUGE CHUNK!' : 'CHUNK!', quality === 'PERFECT' ? 'perfect' : 'default');
+        this.bigEventCooldown = 0.8;
+      }
     }
     if (lit) this.rocket.penetrate(res.hpBefore, res.damage, main.broke);
     if (main.broke && res.retention > 0 && !this.penetratedThisStep) {
@@ -717,7 +739,7 @@ export class Game {
       this.ball.setVelocity(_v.copy(prev).multiplyScalar(res.retention));
       this.camera.kick(lit ? 0.45 : 0.3);
       if (lit) {
-        this.freezeUntil = performance.now() + 35;
+        this.freezeUntil = Math.max(this.freezeUntil, performance.now() + 35);
         this.haptic(15);
       }
     } else if (!main.broke) {
@@ -827,7 +849,7 @@ export class Game {
   }
 
   /** Section damage feedback: dust/shards by material, sound, popup, score HUD. */
-  private cellFeedback(_ref: CellRef, r: DamageResult, speed: number, line: ScoreLine | null, direct: boolean) {
+  private cellFeedback(_ref: CellRef, r: DamageResult, speed: number, line: ScoreLine | null, direct: boolean, showPopup = true) {
     const c = r.cell;
     _v3.set(c.x, c.y, c.z);
     const mat = c.material as MaterialKind;
@@ -842,7 +864,7 @@ export class Game {
     }
     if (direct) this.camera.kick(Math.min(0.4, speed / 150) + (r.broke ? 0.12 : 0));
     if (!line) return;
-    this.popupAt(_v3, line);
+    if (showPopup) this.popupAt(_v3, line);
     this.bumpScore(line, mat, r.broke);
   }
 
@@ -1102,6 +1124,19 @@ export class Game {
   }
 
   private updateFlight(dt: number, simDt: number) {
+    // A line drive that clips the pitcher's scaffold deck splinters straight through the plywood.
+    if (this.ball.active && !this.deckSmashed) {
+      const p = this.ball.pos;
+      const r = 0.4;
+      if (p.x > DECK_BOX.minX - r && p.x < DECK_BOX.maxX + r && p.y > DECK_BOX.minY - r && p.y < DECK_BOX.maxY && p.z > DECK_BOX.minZ - r && p.z < DECK_BOX.maxZ + r) {
+        this.deckSmashed = true;
+        this.particles.burst(p, 'plank', 22, 9);
+        this.props.spawnDebris(p, _v.copy(this.ball.vel).multiplyScalar(0.5), 4);
+        this.audio.impact('plank', this.ball.vel.length(), true);
+        this.camera.kick(0.25);
+        this.ball.setVelocity(_v.copy(this.ball.vel).multiplyScalar(0.92));
+      }
+    }
     // Rocket state.
     if (this.ball.active && !this.rocket.finished) {
       const ev = this.rocket.tick(simDt);

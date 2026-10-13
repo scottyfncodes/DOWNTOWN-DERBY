@@ -1,19 +1,31 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { RAPIER as R } from '../engine/physics';
-import { makeFacade, makeRoofTexture } from './textures';
 import { StaticRegistry } from './statics';
 import { ROOF_Y } from '../logic/citylayout';
 
-/** The pitcher's rooftop: a narrow tower across the street from the batting cage. */
-export const MOUND_W = 9;
-export const MOUND_D = 8;
+/**
+ * The pitcher works from a construction scaffold deck across the street, level with the batter's roof.
+ * The deck is open underneath, so line drives fly between the scaffold legs; the deck itself has no collider
+ * (a ball that clips it smashes through the plywood, see DECK_BOX).
+ */
+export const MOUND_W = 8;
+export const MOUND_D = 6;
 export const MOUND_Z = -29;
-/** A storey below the cage so line drives clear it. */
-export const MOUND_Y = ROOF_Y - 5.5;
+/** Same plane as the batter. */
+export const MOUND_Y = ROOF_Y;
 export const PITCHER_POS = new THREE.Vector3(0.4, MOUND_Y, MOUND_Z + 0.6);
 /** Where the ball leaves the pitcher's hand. */
 export const RELEASE_POS = new THREE.Vector3(0.75, MOUND_Y + 2.05, MOUND_Z + 2.2);
+const DECK_T = 0.45;
+/** Deck volume for the "ball smashed through the scaffold" effect. */
+export const DECK_BOX = {
+  minX: -MOUND_W / 2,
+  maxX: MOUND_W / 2,
+  minY: MOUND_Y - DECK_T,
+  maxY: MOUND_Y + 1.1,
+  minZ: MOUND_Z - MOUND_D / 2,
+  maxZ: MOUND_Z + MOUND_D / 2,
+};
 
 export type PitcherPhase = 'idle' | 'windup' | 'release' | 'follow';
 
@@ -24,35 +36,100 @@ export interface PitcherRig {
   heldBall: THREE.Mesh;
 }
 
-export function buildPitcherMound(scene: THREE.Scene, world: RAPIER.World, statics: StaticRegistry, envMap: THREE.Texture | null): { group: THREE.Group; pitcher: PitcherRig; collidable: THREE.Object3D[] } {
+export function buildPitcherMound(scene: THREE.Scene, _world: RAPIER.World, _statics: StaticRegistry, envMap: THREE.Texture | null): { group: THREE.Group; pitcher: PitcherRig; collidable: THREE.Object3D[] } {
   const group = new THREE.Group();
   const collidable: THREE.Object3D[] = [];
-  const f = makeFacade('concrete', 23);
-  const mat = new THREE.MeshStandardMaterial({ map: f.map, emissiveMap: f.emissive, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.85 });
-  const tower = new THREE.Mesh(new THREE.BoxGeometry(MOUND_W, MOUND_Y, MOUND_D), mat);
-  const uv = tower.geometry.attributes.uv as THREE.BufferAttribute;
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * MOUND_W) / f.tile[0], (uv.getY(i) * MOUND_Y) / f.tile[1]);
-  tower.position.set(0, MOUND_Y / 2, MOUND_Z);
-  tower.castShadow = true;
-  tower.receiveShadow = true;
-  group.add(tower);
-  collidable.push(tower);
-  statics.register(world.createCollider(R.ColliderDesc.cuboid(MOUND_W / 2, MOUND_Y / 2, MOUND_D / 2).setTranslation(0, MOUND_Y / 2, MOUND_Z).setFriction(0.7).setRestitution(0.4)), 'roof', MOUND_Y);
-  const roofTex = makeRoofTexture(11);
-  roofTex.repeat.set(2, 2);
-  const roof = new THREE.Mesh(new THREE.PlaneGeometry(MOUND_W, MOUND_D), new THREE.MeshStandardMaterial({ map: roofTex, roughness: 0.95 }));
-  roof.rotation.x = -Math.PI / 2;
-  roof.position.set(0, MOUND_Y + 0.02, MOUND_Z);
-  roof.receiveShadow = true;
-  group.add(roof);
-  // Low side rails only: the front and back edges stay clear of the line of fire.
-  const trim = new THREE.MeshStandardMaterial({ color: 0x8e8578, roughness: 0.9 });
-  for (const x of [-MOUND_W / 2 + 0.2, MOUND_W / 2 - 0.2]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, MOUND_D), trim);
-    m.position.set(x, MOUND_Y + 0.25, MOUND_Z);
-    m.castShadow = true;
-    group.add(m);
+  const steel = new THREE.MeshStandardMaterial({ color: 0xd9a514, roughness: 0.5, metalness: 0.55, envMap });
+  const plywood = new THREE.MeshStandardMaterial({ color: 0xb08a5a, roughness: 0.9 });
+  // Deck
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(MOUND_W, DECK_T, MOUND_D), plywood);
+  deck.position.set(0, MOUND_Y - DECK_T / 2, MOUND_Z);
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+  collidable.push(deck);
+  // Edge beams
+  for (const z of [MOUND_Z - MOUND_D / 2, MOUND_Z + MOUND_D / 2]) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(MOUND_W + 0.3, 0.35, 0.3), steel);
+    beam.position.set(0, MOUND_Y - DECK_T - 0.15, z);
+    group.add(beam);
   }
+  // Scaffold legs to the street, with diagonal bracing on the side faces only (the shooting lane stays open).
+  const legH = MOUND_Y - DECK_T;
+  const legGeo = new THREE.CylinderGeometry(0.16, 0.16, legH, 8);
+  for (const x of [-MOUND_W / 2 + 0.2, MOUND_W / 2 - 0.2]) {
+    for (const z of [MOUND_Z - MOUND_D / 2 + 0.2, MOUND_Z + MOUND_D / 2 - 0.2]) {
+      const leg = new THREE.Mesh(legGeo, steel);
+      leg.position.set(x, legH / 2, z);
+      leg.castShadow = true;
+      group.add(leg);
+    }
+    const span = MOUND_D - 0.4;
+    const lift = 6;
+    const diag = Math.hypot(span, lift);
+    for (let y = 2; y + lift <= legH; y += lift) {
+      const brace = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, diag, 6), steel);
+      brace.position.set(x, y + lift / 2, MOUND_Z);
+      brace.rotation.x = (Math.floor(y / lift) % 2 ? 1 : -1) * Math.atan2(span, lift);
+      group.add(brace);
+      const tie = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, span, 6), steel);
+      tie.rotation.x = Math.PI / 2;
+      tie.position.set(x, y, MOUND_Z);
+      group.add(tie);
+    }
+  }
+  // Guard rails along the sides, toe boards, and a hoist arm.
+  for (const x of [-MOUND_W / 2 + 0.1, MOUND_W / 2 - 0.1]) {
+    for (const h of [0.55, 1.05]) {
+      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, MOUND_D, 6), steel);
+      rail.rotation.x = Math.PI / 2;
+      rail.position.set(x, MOUND_Y + h, MOUND_Z);
+      group.add(rail);
+    }
+    for (const z of [MOUND_Z - MOUND_D / 2 + 0.2, MOUND_Z + MOUND_D / 2 - 0.2]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 6), steel);
+      post.position.set(x, MOUND_Y + 0.55, z);
+      group.add(post);
+    }
+    const toe = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.2, MOUND_D), plywood);
+    toe.position.set(x, MOUND_Y + 0.1, MOUND_Z);
+    group.add(toe);
+  }
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5, 8), steel);
+  mast.position.set(-MOUND_W / 2 + 0.4, MOUND_Y + 2.5, MOUND_Z - MOUND_D / 2 + 0.4);
+  group.add(mast);
+  const jib = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.18, 0.18), steel);
+  jib.position.set(-MOUND_W / 2 - 1, MOUND_Y + 4.9, MOUND_Z - MOUND_D / 2 + 0.4);
+  group.add(jib);
+  const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 3, 4), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  hook.position.set(-MOUND_W / 2 - 2.4, MOUND_Y + 3.4, MOUND_Z - MOUND_D / 2 + 0.4);
+  group.add(hook);
+  // Hazard stripes along the front edge so the deck reads as a work platform.
+  const stripeTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 8;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#1a1a1a';
+    g.fillRect(0, 0, 64, 8);
+    g.fillStyle = '#ffc21a';
+    for (let x = -8; x < 72; x += 16) {
+      g.beginPath();
+      g.moveTo(x, 8);
+      g.lineTo(x + 8, 0);
+      g.lineTo(x + 16, 0);
+      g.lineTo(x + 8, 8);
+      g.fill();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = THREE.RepeatWrapping;
+    t.repeat.set(MOUND_W / 2, 1);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const hazard = new THREE.Mesh(new THREE.PlaneGeometry(MOUND_W, DECK_T), new THREE.MeshStandardMaterial({ map: stripeTex, roughness: 0.7 }));
+  hazard.position.set(0, MOUND_Y - DECK_T / 2, MOUND_Z + MOUND_D / 2 + 0.01);
+  group.add(hazard);
   // Mound: a low dirt disc + rubber.
   const mound = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.25, 20), new THREE.MeshStandardMaterial({ color: 0x8a6a4a, roughness: 1 }));
   mound.position.set(PITCHER_POS.x, MOUND_Y + 0.12, PITCHER_POS.z - 0.3);
@@ -61,17 +138,13 @@ export function buildPitcherMound(scene: THREE.Scene, world: RAPIER.World, stati
   const rubber = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.05, 0.15), new THREE.MeshStandardMaterial({ color: 0xfff4e0 }));
   rubber.position.set(PITCHER_POS.x, MOUND_Y + 0.26, PITCHER_POS.z - 0.6);
   group.add(rubber);
-  // Ball bucket beside the mound.
-  const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.34, 0.6, 12, 1, true), new THREE.MeshStandardMaterial({ color: 0x5ec6ff, roughness: 0.6, side: THREE.DoubleSide }));
-  bucket.position.set(PITCHER_POS.x - 2.6, MOUND_Y + 0.3, PITCHER_POS.z - 0.8);
+  // Bucket of balls (a paint bucket, naturally) and a work lamp clamped to the rail.
+  const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.55, 12, 1, true), new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.6, side: THREE.DoubleSide }));
+  bucket.position.set(PITCHER_POS.x - 2.4, MOUND_Y + 0.28, PITCHER_POS.z - 1.2);
   group.add(bucket);
-  // Rooftop light pole aimed at the plate.
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 6, 8), new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: 0.5, metalness: 0.7 }));
-  pole.position.set(-3.8, MOUND_Y + 3, MOUND_Z - 3.2);
-  group.add(pole);
-  const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 0.5), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff0c0, emissiveIntensity: 2 }));
-  lamp.position.set(-3.5, MOUND_Y + 6, MOUND_Z - 2.9);
-  lamp.rotation.y = 0.5;
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.45, 0.3), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff0c0, emissiveIntensity: 2 }));
+  lamp.position.set(MOUND_W / 2 - 0.1, MOUND_Y + 1.3, MOUND_Z - MOUND_D / 2 + 0.6);
+  lamp.rotation.y = -0.6;
   group.add(lamp);
 
   const pitcher = buildPitcher(envMap);
@@ -84,9 +157,12 @@ export function buildPitcherMound(scene: THREE.Scene, world: RAPIER.World, stati
 function buildPitcher(envMap: THREE.Texture | null): PitcherRig {
   const group = new THREE.Group();
   const skin = new THREE.MeshStandardMaterial({ color: 0x8d5a3b, roughness: 0.7 });
-  const jersey = new THREE.MeshStandardMaterial({ color: 0x3d405b, roughness: 0.8 });
+  // Work clothes: navy long-sleeve shirt under a hi-vis vest, white hard hat.
+  const jersey = new THREE.MeshStandardMaterial({ color: 0x2c3448, roughness: 0.85 });
+  const vestMat = new THREE.MeshStandardMaterial({ color: 0xff6a00, emissive: 0xff5500, emissiveIntensity: 0.45, roughness: 0.6 });
+  const reflective = new THREE.MeshStandardMaterial({ color: 0xe8ecf0, emissive: 0xc8d0d8, emissiveIntensity: 0.35, roughness: 0.25, metalness: 0.6, envMap });
+  const hatMat = new THREE.MeshStandardMaterial({ color: 0xf6f6f2, emissive: 0xffffff, emissiveIntensity: 0.32, roughness: 0.3, metalness: 0.05, envMap });
   const pants = new THREE.MeshStandardMaterial({ color: 0xd9d4c7, roughness: 0.85 });
-  const capMat = new THREE.MeshStandardMaterial({ color: 0x1b1a4d, roughness: 0.5, envMap });
   const hips = new THREE.Group();
   hips.position.y = 1.0;
   group.add(hips);
@@ -102,20 +178,52 @@ function buildPitcher(envMap: THREE.Texture | null): PitcherRig {
   body.position.y = 0.45;
   body.castShadow = true;
   torso.add(body);
-  const number = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3), new THREE.MeshStandardMaterial({ color: 0xffd166 }));
-  number.position.set(0, 0.55, -0.34);
-  number.rotation.y = Math.PI;
-  torso.add(number);
+  // Hi-vis vest: a slightly larger shell over the torso with two reflective bands and shoulder straps.
+  const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.37, 0.72, 16, 1, true), vestMat);
+  vest.material.side = THREE.DoubleSide;
+  vest.position.y = 0.42;
+  vest.castShadow = true;
+  torso.add(vest);
+  for (const y of [0.2, 0.42]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.375, 0.38, 0.07, 16, 1, true), reflective);
+    band.position.y = y;
+    torso.add(band);
+  }
+  for (const x of [-0.17, 0.17]) {
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.05, 0.62), vestMat);
+    strap.position.set(x, 0.8, 0);
+    torso.add(strap);
+    const strapBand = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.055, 0.63), reflective);
+    strapBand.position.set(x, 0.805, 0);
+    torso.add(strapBand);
+  }
+  // Back panel: an X of reflective tape.
+  for (const r of [0.6, -0.6]) {
+    const tape = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, 0.02), reflective);
+    tape.position.set(0, 0.55, -0.375);
+    tape.rotation.z = r;
+    torso.add(tape);
+  }
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), skin);
   head.position.y = 1.08;
   head.castShadow = true;
   torso.add(head);
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), capMat);
-  cap.position.y = 1.14;
-  torso.add(cap);
-  const brim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.04, 0.26), capMat);
-  brim.position.set(0, 1.12, 0.3);
-  torso.add(brim);
+  // White hard hat: dome, full brim with a longer peak at the front, and a centre ridge.
+  const hat = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), hatMat);
+  hat.position.y = 1.13;
+  hat.scale.set(1, 0.9, 1.08);
+  hat.castShadow = true;
+  torso.add(hat);
+  const hatBrim = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.03, 20), hatMat);
+  hatBrim.position.set(0, 1.13, 0.03);
+  hatBrim.scale.set(1, 1, 1.12);
+  torso.add(hatBrim);
+  const peak = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.14), hatMat);
+  peak.position.set(0, 1.125, 0.38);
+  torso.add(peak);
+  const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.48), hatMat);
+  ridge.position.set(0, 1.38, 0.02);
+  torso.add(ridge);
   // Throwing arm: shoulder pivot on the right, forearm segment, hand with the ball.
   const shoulder = new THREE.Group();
   shoulder.position.set(0.38, 0.78, 0);
