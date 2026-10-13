@@ -114,9 +114,39 @@ button:disabled { filter: grayscale(0.6) brightness(0.7); cursor: default; }
   box-shadow: 0 8px 0 #b7801f, 0 14px 30px rgba(0,0,0,0.45), inset 0 -4px 10px rgba(0,0,0,0.12);
   display: grid; place-items: center; text-align: center; color: var(--ink); touch-action: none;
 }
-.swing-btn.winding { background: radial-gradient(circle at 35% 30%, #ffb7a0, var(--coral) 55%, #d84a2c); box-shadow: 0 2px 0 #9b2f18, 0 6px 14px rgba(0,0,0,0.45); transform: translateY(6px); }
+.swing-btn.wait { filter: saturate(0.6) brightness(0.8); }
+.swing-btn.live { background: radial-gradient(circle at 35% 30%, #c8ffe6, var(--mint) 55%, #22b07e); box-shadow: 0 8px 0 #157a56, 0 0 0 6px rgba(78,230,176,0.25), 0 14px 30px rgba(0,0,0,0.45); }
+.swing-btn.is-pressed { transform: translateY(6px); box-shadow: 0 2px 0 #b7801f, 0 6px 14px rgba(0,0,0,0.45); }
 .swing-btn.disabled { filter: grayscale(0.5) brightness(0.75); }
-.swing-btn small { display: block; font-family: var(--hud-font); font-size: 12px; letter-spacing: 0.16em; font-weight: 700; opacity: 0.8; }
+.swing-btn small, .detonate-btn small { display: block; font-family: var(--hud-font); font-size: 12px; letter-spacing: 0.16em; font-weight: 700; opacity: 0.85; }
+.detonate-btn {
+  width: 104px; height: 104px; border-radius: 50%; padding: 0; font-size: 17px; line-height: 1.05;
+  font-family: var(--title-font); letter-spacing: 0.02em; color: var(--cream);
+  background: radial-gradient(circle at 35% 30%, #7a2a1c, #4a1a12 60%, #2a0d08);
+  box-shadow: 0 8px 0 #2a0d08, 0 14px 30px rgba(0,0,0,0.45), inset 0 -4px 10px rgba(0,0,0,0.3);
+  display: grid; place-items: center; text-align: center; touch-action: none;
+}
+.detonate-btn:disabled { filter: none; opacity: 0.85; }
+.detonate-btn.lit {
+  background: radial-gradient(circle at 35% 30%, #ffb7a0, var(--coral) 50%, #d8321c);
+  box-shadow: 0 8px 0 #8c2010, 0 0 0 8px rgba(255,107,74,0.28), 0 14px 34px rgba(255,80,40,0.45);
+  animation: detonate-pulse 0.55s ease-in-out infinite; color: var(--ink);
+}
+.detonate-btn.lit:active { transform: translateY(6px) scale(0.98); animation: none; }
+@keyframes detonate-pulse { 0%,100% { transform: scale(1); box-shadow: 0 8px 0 #8c2010, 0 0 0 6px rgba(255,107,74,0.22), 0 14px 34px rgba(255,80,40,0.45); } 50% { transform: scale(1.06); box-shadow: 0 8px 0 #8c2010, 0 0 0 14px rgba(255,107,74,0.12), 0 14px 40px rgba(255,80,40,0.6); } }
+.pitch-pill, .rocket-pill {
+  position: absolute; left: 50%; top: calc(var(--sat) + 136px); transform: translate(-50%, -6px); opacity: 0;
+  font-weight: 800; font-size: 15px; letter-spacing: 0.22em; text-transform: uppercase; padding: 6px 12px; border-radius: 999px;
+  background: rgba(20,13,31,0.7); color: var(--sky); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: opacity 180ms, transform 180ms; white-space: nowrap; pointer-events: none;
+}
+.pitch-pill.visible, .rocket-pill.visible { opacity: 1; transform: translate(-50%, 0); }
+.rocket-pill { color: var(--coral); }
+.popup.collapse { color: var(--coral); }
+.popup.blast { color: #ffb060; }
+.popup.structure { color: #e8dcc8; }
+.shot-card .cell.hot b { color: var(--coral); }
+.shot-card .chain-line { margin-top: 6px; text-align: center; font-family: var(--title-font); font-size: 14px; color: var(--coral); letter-spacing: 0.04em; }
 .side-controls { position: absolute; right: calc(var(--sar) + 12px); bottom: calc(var(--sab) + 30px); display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .side-controls-left { position: absolute; left: calc(var(--sal) + 12px); bottom: calc(var(--sab) + 30px); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .adv-panel { display: none; flex-direction: column; gap: 6px; background: rgba(20,13,31,0.72); padding: 8px; border-radius: 14px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
@@ -236,7 +266,7 @@ button:disabled { filter: grayscale(0.6) brightness(0.7); cursor: default; }
   .results-card .record { animation: none; }
 }
 @media (min-width: 700px) and (min-height: 500px) {
-  .swing-wrap { width: 150px; height: 150px; } .swing-btn { width: 120px; height: 120px; font-size: 22px; }
+  .swing-wrap { width: 150px; height: 150px; } .swing-btn, .detonate-btn { width: 120px; height: 120px; font-size: 22px; } .detonate-btn { font-size: 19px; }
 }
 @media (max-height: 640px) {
   .shot-card { bottom: calc(var(--sab) + 150px); padding: 8px 12px; }

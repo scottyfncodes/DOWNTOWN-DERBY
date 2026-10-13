@@ -13,20 +13,52 @@ export interface Challenge {
 
 export const CHALLENGES: Challenge[] = [
   {
+    id: 'wrecker',
+    name: 'Wrecking Ball',
+    desc: 'Collapse at least one building in a round.',
+    reward: 700,
+    check: (r) => r.buildingsCollapsed >= 1,
+    progress: (s) => `${s.reduce((a, b) => a + b.buildingsCollapsed, 0)} / 1 collapsed`,
+  },
+  {
+    id: 'domino',
+    name: 'Domino Effect',
+    desc: 'Trigger a chain collapse: one building’s debris brings down another.',
+    reward: 1200,
+    check: (r) => r.chainCollapses >= 1,
+    progress: (s) => `${s.reduce((a, b) => a + b.chainCollapses, 0)} / 1 chain`,
+  },
+  {
+    id: 'spread',
+    name: 'Block Party',
+    desc: 'Damage four different buildings with a single swing.',
+    reward: 650,
+    check: (r) => r.shots.some((s) => s.buildingsDamaged >= 4),
+    progress: (s) => `best ${Math.max(0, ...s.map((x) => x.buildingsDamaged))} / 4 buildings`,
+  },
+  {
+    id: 'sections',
+    name: 'Section Eight',
+    desc: 'Destroy 60 building sections in one round.',
+    reward: 800,
+    check: (r) => r.sectionsDestroyed >= 60,
+    progress: (s) => `${s.reduce((a, b) => a + b.sectionsDestroyed, 0)} / 60 sections`,
+  },
+  {
     id: 'demolition',
     name: 'Demolition Day',
-    desc: 'Score 20,000 or more in a single round.',
+    desc: 'Score 60,000 or more in a single round.',
     reward: 800,
-    check: (r) => r.total >= 20000,
-    progress: (s) => `${s.reduce((a, b) => a + b.score, 0).toLocaleString()} / 20,000`,
+    check: (r) => r.total >= 60000,
+    progress: (s) => `${s.reduce((a, b) => a + b.score, 0).toLocaleString()} / 60,000`,
   },
   {
     id: 'bigswing',
     name: 'One Big Swing',
-    desc: 'Score 5,000 or more on a single shot.',
+    desc: 'Score 15,000 or more on a single shot.',
     reward: 600,
-    check: (r) => r.bestShot >= 5000,
-    progress: (s) => `${Math.max(0, ...s.map((x) => x.score)).toLocaleString()} / 5,000`,
+    check: (r) => r.bestShot >= 15000,
+    progress: (s) => `${Math.max(0, ...s.map((x) => x.score)).toLocaleString()} / 15,000`,
   },
   {
     id: 'glazier',
@@ -63,10 +95,10 @@ export const CHALLENGES: Challenge[] = [
   {
     id: 'softtouch',
     name: 'Soft Touch',
-    desc: 'Score 1,500+ on a shot without perfect contact.',
+    desc: 'Score 4,000+ on a shot without perfect contact.',
     reward: 450,
-    check: (r) => r.shots.some((s) => s.quality !== 'PERFECT' && s.score >= 1500),
-    progress: (s) => `${Math.max(0, ...s.filter((x) => x.quality !== 'PERFECT').map((x) => x.score)).toLocaleString()} / 1,500`,
+    check: (r) => r.shots.some((s) => s.quality !== 'PERFECT' && s.score >= 4000),
+    progress: (s) => `${Math.max(0, ...s.filter((x) => x.quality !== 'PERFECT').map((x) => x.score)).toLocaleString()} / 4,000`,
   },
 ];
 

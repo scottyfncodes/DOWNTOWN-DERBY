@@ -3,7 +3,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { RAPIER as R } from '../engine/physics';
 import { makeFacade, makeFenceTexture, makeRoofTexture } from './textures';
 import { StaticRegistry } from './statics';
-import { ROOF_Y } from './city';
+import { ROOF_Y } from '../logic/citylayout';
 
 export const TOWER_W = 36;
 export const TEE_POS = new THREE.Vector3(0, ROOF_Y + 1.02, -13.5);
@@ -68,16 +68,13 @@ export function buildRooftop(scene: THREE.Scene, world: RAPIER.World, statics: S
   plate.position.set(TEE_POS.x, ROOF_Y + 0.1, TEE_POS.z);
   group.add(plate);
 
-  // Tee
-  const teeMat = new THREE.MeshStandardMaterial({ color: 0x1f1f24, roughness: 0.7 });
-  const teeBase = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.5, 0.08, 16), teeMat);
-  teeBase.position.set(TEE_POS.x, ROOF_Y + 0.14, TEE_POS.z);
-  const teePost = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, TEE_POS.y - ROOF_Y - 0.3, 10), teeMat);
-  teePost.position.set(TEE_POS.x, ROOF_Y + (TEE_POS.y - ROOF_Y - 0.3) / 2 + 0.1, TEE_POS.z);
-  const teeCup = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.1, 0.22, 12, 1, true), new THREE.MeshStandardMaterial({ color: 0x1f1f24, roughness: 0.7, side: THREE.DoubleSide }));
-  teeCup.position.set(TEE_POS.x, TEE_POS.y - 0.22, TEE_POS.z);
-  teeBase.castShadow = teePost.castShadow = true;
-  group.add(teeBase, teePost, teeCup);
+  // Batter's box chalk lines either side of the plate.
+  const chalk = new THREE.MeshStandardMaterial({ color: 0xfff4e0, roughness: 0.9 });
+  for (const side of [-1, 1]) {
+    const line = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 2.4), chalk);
+    line.position.set(TEE_POS.x + side * 1.6, ROOF_Y + 0.1, TEE_POS.z);
+    group.add(line);
+  }
 
   // Batting cage: posts + chain-link on back, sides and top. Open toward -Z.
   const cageW = 13;

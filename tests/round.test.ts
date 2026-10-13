@@ -3,12 +3,12 @@ import { BALLS_PER_ROUND, RoundManager } from '../src/logic/round';
 import type { ShotSummary } from '../src/logic/types';
 
 function shot(score: number, extra: Partial<ShotSummary> = {}): ShotSummary {
-  return { score, distance: 100, quality: 'SOLID', objectsDamaged: 1, chainCount: 1, bestCombo: 1, glassBroken: 0, lines: [], uniqueMaterials: 1, ...extra };
+  return { score, distance: 100, quality: 'SOLID', objectsDamaged: 1, chainCount: 1, bestCombo: 1, glassBroken: 0, lines: [], uniqueMaterials: 1, sectionsDestroyed: 0, buildingsDamaged: 0, buildingsCollapsed: 0, chainCollapses: 0, detonated: false, ...extra };
 }
 
 function playShot(r: RoundManager, score = 100) {
   expect(r.transition('AIMING')).toBe(true);
-  expect(r.transition('WINDING')).toBe(true);
+  expect(r.transition('PITCHING')).toBe(true);
   expect(r.commitSwing()).toBe(true);
   expect(r.transition('BALL_IN_FLIGHT')).toBe(true);
   expect(r.transition('SHOT_RESOLVING')).toBe(true);
@@ -29,13 +29,28 @@ describe('RoundManager', () => {
     expect(r.currentBall).toBe(2);
   });
 
+  it('a taken pitch returns to the wind-up without consuming a ball', () => {
+    const r = new RoundManager();
+    r.startRound();
+    r.transition('AIMING');
+    expect(r.takePitch()).toBe(false);
+    r.transition('PITCHING');
+    expect(r.takePitch()).toBe(true);
+    expect(r.state).toBe('AIMING');
+    expect(r.ballsUsed).toBe(0);
+    expect(r.commitSwing()).toBe(false);
+    r.transition('PITCHING');
+    expect(r.commitSwing()).toBe(true);
+    expect(r.ballsUsed).toBe(1);
+  });
+
   it('rejects invalid transitions and double swings', () => {
     const r = new RoundManager();
     r.startRound();
     expect(r.transition('BALL_IN_FLIGHT')).toBe(false);
     expect(r.commitSwing()).toBe(false);
     r.transition('AIMING');
-    r.transition('WINDING');
+    r.transition('PITCHING');
     expect(r.commitSwing()).toBe(true);
     expect(r.commitSwing()).toBe(false);
     expect(r.ballsUsed).toBe(1);
@@ -45,7 +60,7 @@ describe('RoundManager', () => {
     const r = new RoundManager();
     r.startRound();
     r.transition('AIMING');
-    r.transition('WINDING');
+    r.transition('PITCHING');
     r.commitSwing();
     r.transition('BALL_IN_FLIGHT');
     r.transition('SHOT_RESOLVING');
@@ -72,6 +87,8 @@ describe('RoundManager', () => {
     expect(s.isRecord).toBe(true);
     expect(s.bestShot).toBe(1000);
     expect(s.shots.length).toBe(10);
+    expect(s.buildingsCollapsed).toBe(0);
+    expect(s.sectionsDestroyed).toBe(0);
     // cannot swing an eleventh ball
     expect(r.transition('AIMING')).toBe(false);
   });

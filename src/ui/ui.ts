@@ -1,8 +1,8 @@
 import type { ContactQuality, RoundSummary, ShotSummary, ScoreLine } from '../logic/types';
 import { qualityLabel } from '../logic/round';
-import { BATS, BALLS } from '../logic/equipment';
+import { BATS, BALLS, ROCKETS } from '../logic/equipment';
 import { CHALLENGES } from '../logic/challenges';
-import type { Profile } from '../logic/progression';
+import type { EquipKind, Profile } from '../logic/progression';
 
 export interface UIHandlers {
   onPlay: () => void;
@@ -11,12 +11,14 @@ export interface UIHandlers {
   onSettings: () => void;
   onBack: () => void;
   onMute: () => void;
-  onWindStart: () => void;
-  onWindRelease: () => void;
+  /** tap: swing at the pitch (or detonate when a rocket is lit and the swing is spent) */
+  onSwing: () => void;
+  /** tap: detonate the rocket ball in flight */
+  onDetonate: () => void;
   onContinue: () => void;
   onPlayAgain: () => void;
-  onEquip: (kind: 'bat' | 'ball', id: string) => void;
-  onBuy: (kind: 'bat' | 'ball', id: string) => void;
+  onEquip: (kind: EquipKind, id: string) => void;
+  onBuy: (kind: EquipKind, id: string) => void;
   onSelectChallenge: (id: string | null) => void;
   onToggleSetting: (key: 'sound' | 'shake' | 'reducedMotion' | 'haptics' | 'slowmo') => void;
   onLoft: (delta: number) => void;
@@ -49,6 +51,9 @@ export class UI {
   challengePill: HTMLElement;
   aimHint: HTMLElement;
   swingBtn: HTMLButtonElement;
+  detonateBtn: HTMLButtonElement;
+  pitchPill: HTMLElement;
+  rocketPill: HTMLElement;
   swingRing: SVGSVGElement;
   needle: SVGCircleElement;
   sweetArc: SVGPathElement;
@@ -66,7 +71,10 @@ export class UI {
   private targetScore = 0;
   private toastTimer = 0;
   private popups = 0;
-  private windHeld = false;
+  private lastSwingTap = 0;
+  private lastDetonateTap = 0;
+  private pitchPillTimer = 0;
+  private rocketKey = '';
 
   constructor(root: HTMLElement, private h: UIHandlers) {
     this.root = root;
@@ -76,9 +84,9 @@ export class UI {
     // ---- Title ----
     this.title = el('div', 'screen title-screen');
     const tw = el('div', 'title-wrap');
-    tw.appendChild(el('div', 'title-kicker', 'Rooftop Batting Cage'));
+    tw.appendChild(el('div', 'title-kicker', 'Rooftop Rocket Demolition'));
     tw.appendChild(el('h1', 'title-main', 'Downtown<span class="accent">Derby</span>'));
-    tw.appendChild(el('div', 'title-tag', 'Ten swings · One city · Make them count'));
+    tw.appendChild(el('div', 'title-tag', 'Ten pitches · One city · Bring it down'));
     this.title.appendChild(tw);
     this.title.appendChild(el('div', 'spacer'));
     const actions = el('div', 'title-actions');
@@ -136,12 +144,18 @@ export class UI {
     this.hud.appendChild(this.popupLayer);
     this.callout = el('div', 'center-callout', '');
     this.hud.appendChild(this.callout);
+    this.pitchPill = el('div', 'pitch-pill', '');
+    this.pitchPill.id = 'pitch-pill';
+    this.hud.appendChild(this.pitchPill);
+    this.rocketPill = el('div', 'rocket-pill', '');
+    this.rocketPill.id = 'rocket-pill';
+    this.hud.appendChild(this.rocketPill);
     this.shotCard = el('div', 'shot-card');
     this.shotCard.id = 'shot-card';
     this.hud.appendChild(this.shotCard);
 
     const bottom = el('div', 'hud-bottom');
-    this.aimHint = el('div', 'aim-hint', 'Drag to aim · Hold to wind up · Release to swing');
+    this.aimHint = el('div', 'aim-hint', 'Drag to aim · Tap SWING as the pitch crosses the plate');
     bottom.appendChild(this.aimHint);
     const wrap = el('div', 'swing-wrap');
     this.swingRing = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -171,39 +185,39 @@ export class UI {
     this.needle.style.display = 'none';
     this.swingRing.append(track, this.sweetArc, this.fillArc, this.needle);
     wrap.appendChild(this.swingRing);
-    this.swingBtn = el('button', 'swing-btn', 'Swing<small>hold</small>');
+    this.swingBtn = el('button', 'swing-btn', 'Swing<small>tap</small>');
     this.swingBtn.id = 'swing-btn';
-    const down = (e: Event) => {
+    const swingTap = (e: Event) => {
       e.preventDefault();
-      if (this.windHeld) return;
-      this.windHeld = true;
-      this.swingBtn.classList.add('winding');
-      if (e instanceof PointerEvent) {
-        try {
-          this.swingBtn.setPointerCapture(e.pointerId);
-        } catch {
-          /* ignore */
-        }
-      }
-      h.onWindStart();
+      const now = performance.now();
+      if (now - this.lastSwingTap < 120) return; // de-duplicate pointer + click + key
+      this.lastSwingTap = now;
+      this.swingBtn.classList.add('is-pressed');
+      window.setTimeout(() => this.swingBtn.classList.remove('is-pressed'), 120);
+      h.onSwing();
     };
-    const up = (e: Event) => {
-      e.preventDefault();
-      if (!this.windHeld) return;
-      this.windHeld = false;
-      this.swingBtn.classList.remove('winding');
-      h.onWindRelease();
-    };
-    this.swingBtn.addEventListener('pointerdown', down);
-    this.swingBtn.addEventListener('pointerup', up);
-    this.swingBtn.addEventListener('pointercancel', up);
+    this.swingBtn.addEventListener('pointerdown', swingTap);
     this.swingBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.detonateBtn = el('button', 'detonate-btn', 'Detonate<small>tap</small>');
+    this.detonateBtn.id = 'detonate-btn';
+    const detonateTap = (e: Event) => {
+      e.preventDefault();
+      const now = performance.now();
+      if (now - this.lastDetonateTap < 150) return;
+      this.lastDetonateTap = now;
+      h.onDetonate();
+    };
+    this.detonateBtn.addEventListener('pointerdown', detonateTap);
+    this.detonateBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.detonateBtn.style.display = 'none';
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !e.repeat) down(e);
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault();
+        swingTap(e);
+      }
+      if ((e.code === 'KeyD' || e.code === 'KeyX') && !e.repeat) detonateTap(e);
     });
-    window.addEventListener('keyup', (e) => {
-      if (e.code === 'Space') up(e);
-    });
+    wrap.appendChild(this.detonateBtn);
     wrap.appendChild(this.swingBtn);
     bottom.appendChild(wrap);
     this.hud.appendChild(bottom);
@@ -215,7 +229,7 @@ export class UI {
     const loftRow = el('div', 'loft-row');
     const minus = el('button', '', '−');
     minus.addEventListener('click', () => h.onLoft(-4));
-    this.loftVal = el('div', 'loft-val', '24°');
+    this.loftVal = el('div', 'loft-val', '6°');
     const plus = el('button', '', '+');
     plus.addEventListener('click', () => h.onLoft(4));
     loftRow.append(minus, this.loftVal, plus);
@@ -403,15 +417,67 @@ export class UI {
   setSwingEnabled(on: boolean) {
     this.swingBtn.classList.toggle('disabled', !on);
     this.swingBtn.disabled = !on;
-    if (!on) {
-      this.windHeld = false;
-      this.swingBtn.classList.remove('winding');
+  }
+
+  /** 'wait' = pitcher winding up (button dim), 'live' = pitch in the air (button hot). */
+  setSwingState(state: 'wait' | 'live' | 'off') {
+    this.swingBtn.classList.toggle('wait', state === 'wait');
+    this.swingBtn.classList.toggle('live', state === 'live');
+    this.swingBtn.innerHTML = state === 'wait' ? 'Swing<small>wait for it</small>' : state === 'live' ? 'Swing<small>now!</small>' : 'Swing<small>tap</small>';
+  }
+
+  /**
+   * Rocket control. 'hidden' shows the swing button; 'armed' shows a dim DETONATE while the fuse burns; 'lit' makes it hot.
+   * `charge` 0..1 drives the ring fill, `fuel` 0..1 the label.
+   */
+  setRocket(state: 'hidden' | 'armed' | 'lit', charge = 1, fuel = 1) {
+    // Called every frame in flight: only touch the DOM when something visible changed.
+    const key = `${state}:${Math.round(charge * 100)}:${Math.round(fuel * 20)}`;
+    if (key === this.rocketKey) return;
+    this.rocketKey = key;
+    const show = state !== 'hidden';
+    this.detonateBtn.style.display = show ? '' : 'none';
+    this.swingBtn.style.display = show ? 'none' : '';
+    this.detonateBtn.classList.toggle('lit', state === 'lit');
+    this.detonateBtn.disabled = state !== 'lit';
+    if (show) {
+      this.detonateBtn.innerHTML = state === 'lit' ? `Detonate<small>${fuel > 0.02 ? 'burning' : 'coasting'} · ${Math.round(charge * 100)}%</small>` : 'Detonate<small>arming…</small>';
+      // Ring: charge as the fill, no sweet zone.
+      this.sweetArc.setAttribute('d', '');
+      const a0 = -135;
+      this.fillArc.setAttribute('stroke', state === 'lit' ? '#ff6b4a' : 'rgba(255,107,74,0.35)');
+      this.fillArc.setAttribute('d', arcPath(66, 66, 60, a0, a0 + Math.max(0.01, charge) * 270));
+      this.needle.style.display = 'none';
+    } else {
+      this.fillArc.setAttribute('stroke', '#ffd166');
     }
+    this.rocketPill.classList.toggle('visible', state === 'lit');
+    if (state === 'lit') this.rocketPill.textContent = fuel > 0.02 ? `ROCKET · FUEL ${Math.round(fuel * 100)}%` : 'ROCKET · COASTING';
+  }
+
+  hidePitch() {
+    this.pitchPill.classList.remove('visible');
+    this.pitchPillTimer = 0;
+  }
+
+  /** Pitch readout near the top; fades after a moment. */
+  showPitch(label: string, mph: number) {
+    this.pitchPill.textContent = `${label.toUpperCase()} · ${mph}`;
+    this.pitchPill.classList.add('visible');
+    this.pitchPillTimer = 1.4;
   }
 
   setHint(text: string | null) {
     this.aimHint.classList.toggle('hidden', !text);
     if (text) this.aimHint.textContent = text;
+  }
+
+  /**
+   * Timing ring during a pitch: `progress` 0..1 of the flight (fills the arc), with the perfect window drawn as a green arc
+   * around `sweet` (also 0..1). Null hides the needle.
+   */
+  setPitchProgress(progress: number | null, sweet: number, width: number) {
+    this.setMeter(progress === null ? null : Math.min(1, progress), sweet, width);
   }
 
   /** value, sweet centre and width in 0..1 */
@@ -439,7 +505,10 @@ export class UI {
     const p = el('div', 'popup');
     if (line.material === 'glass') p.classList.add('glass');
     else if (line.material === 'hvac' || line.material === 'streetlight' || line.material === 'watertower' || line.material === 'antenna') p.classList.add('metal');
-    if (line.points >= 1500) p.classList.add('huge');
+    if (line.kind === 'collapse') p.classList.add('collapse');
+    else if (line.kind === 'detonation') p.classList.add('blast');
+    else if (line.kind === 'structure') p.classList.add('structure');
+    if (line.points >= 1500 || line.kind === 'collapse') p.classList.add('huge');
     else if (line.points >= 600) p.classList.add('big');
     p.innerHTML = `${line.label}${line.combo && line.combo > 1 ? ` ×${line.combo}` : ''}<span class="pts">+${line.points.toLocaleString()}</span>`;
     p.style.left = `${Math.max(60, Math.min(window.innerWidth - 60, x))}px`;
@@ -481,11 +550,12 @@ export class UI {
     this.shotCard.innerHTML = `
       <div class="head"><div class="big">+${shot.score.toLocaleString()}</div><div class="quality ${q}">${qualityLabel(shot.quality)} contact${isBestShot ? ' · BEST' : ''}</div></div>
       <div class="grid">
-        <div class="cell"><b>${shot.distance}m</b><span>Carry</span></div>
-        <div class="cell"><b>${shot.objectsDamaged}</b><span>Damaged</span></div>
-        <div class="cell"><b>${shot.chainCount}</b><span>Chain</span></div>
+        <div class="cell"><b>${shot.sectionsDestroyed}</b><span>Sections</span></div>
+        <div class="cell"><b>${shot.buildingsDamaged}</b><span>Buildings</span></div>
+        <div class="cell${shot.buildingsCollapsed ? ' hot' : ''}"><b>${shot.buildingsCollapsed}</b><span>Collapsed</span></div>
         <div class="cell"><b>×${shot.bestCombo}</b><span>Combo</span></div>
       </div>
+      ${shot.chainCollapses ? `<div class="chain-line">⚡ Chain reaction ×${shot.chainCollapses}</div>` : ''}
       <div class="lines">${lines.map((l) => `<span class="line${l.kind !== 'impact' ? ' gold' : ''}">${l.label} +${l.points.toLocaleString()}</span>`).join('')}</div>
       <div class="next">Round ${total.toLocaleString()} · ${remaining > 0 ? `${remaining} ball${remaining === 1 ? '' : 's'} left · tap to continue` : 'tap for results'}</div>`;
     this.shotCard.classList.add('visible');
@@ -506,10 +576,12 @@ export class UI {
         <div class="stats">
           ${stat('Best shot', r.bestShot.toLocaleString())}
           ${stat('Best combo', `×${r.bestCombo}`)}
-          ${stat('Longest', `${r.longestDistance}m`)}
-          ${stat('Objects', String(r.objectsDamaged))}
-          ${stat('Glass', String(r.glassBroken))}
+          ${stat('Demolished', String(r.buildingsCollapsed))}
+          ${stat('Chain collapses', String(r.chainCollapses))}
+          ${stat('Sections', String(r.sectionsDestroyed))}
           ${stat('Perfect', String(r.perfectContacts))}
+          ${stat('Objects', String(r.objectsDamaged))}
+          ${stat('Longest', `${r.longestDistance}m`)}
         </div>
         <div class="credits">+${r.creditsEarned.toLocaleString()} credits · ${profile.credits.toLocaleString()} total</div>
         ${r.challengeCompleted ? `<div class="challenge-done">Challenge complete: ${challengeName} · +${r.challengeReward} credits</div>` : ''}
@@ -524,9 +596,9 @@ export class UI {
   }
 
   renderGarage(profile: Profile) {
-    const item = (kind: 'bat' | 'ball', id: string, name: string, desc: string, cost: number, tags: { label: string; dir: string }[]) => {
-      const owned = (kind === 'bat' ? profile.unlockedBats : profile.unlockedBalls).includes(id);
-      const equipped = (kind === 'bat' ? profile.equippedBat : profile.equippedBall) === id;
+    const item = (kind: EquipKind, id: string, name: string, desc: string, cost: number, tags: { label: string; dir: string }[]) => {
+      const owned = (kind === 'bat' ? profile.unlockedBats : kind === 'ball' ? profile.unlockedBalls : profile.unlockedRockets).includes(id);
+      const equipped = (kind === 'bat' ? profile.equippedBat : kind === 'ball' ? profile.equippedBall : profile.equippedRocket) === id;
       const btn = equipped ? '<button class="equipped-btn" disabled>Equipped</button>' : owned ? `<button data-equip="${kind}:${id}">Equip</button>` : `<button class="${profile.credits >= cost ? '' : 'ghost'}" data-buy="${kind}:${id}">${cost.toLocaleString()} cr</button>`;
       return `<div class="item${equipped ? ' equipped' : ''}"><div class="name">${name}</div>${btn}<div class="desc">${desc}</div><div class="tags">${tags.map((t) => `<span class="tag ${t.dir}">${t.label}</span>`).join('')}</div></div>`;
     };
@@ -537,15 +609,18 @@ export class UI {
         ${BATS.map((b) => item('bat', b.id, b.name, b.desc, b.cost, b.tags)).join('')}
         <h3>Balls</h3>
         ${BALLS.map((b) => item('ball', b.id, b.name, b.desc, b.cost, b.tags)).join('')}
+        <h3>Rockets</h3>
+        <div class="desc" style="opacity:.8;font-size:13px">Clean contact lights the fuse. Tap DETONATE in flight: outside for a wide blast, inside for structural damage.</div>
+        ${ROCKETS.map((r) => item('rocket', r.id, r.name, r.desc, r.cost, r.tags)).join('')}
       </div>
       <div class="panel-actions"><button class="ghost" id="garage-back">Back</button><button id="garage-play">Play</button></div>`;
     this.garage.querySelectorAll<HTMLButtonElement>('[data-equip]').forEach((b) => b.addEventListener('click', () => {
       const [k, id] = b.dataset.equip!.split(':');
-      this.h.onEquip(k as 'bat' | 'ball', id);
+      this.h.onEquip(k as EquipKind, id);
     }));
     this.garage.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((b) => b.addEventListener('click', () => {
       const [k, id] = b.dataset.buy!.split(':');
-      this.h.onBuy(k as 'bat' | 'ball', id);
+      this.h.onBuy(k as EquipKind, id);
     }));
     this.garage.querySelector('#garage-back')!.addEventListener('click', () => this.h.onBack());
     this.garage.querySelector('#garage-play')!.addEventListener('click', () => this.h.onPlay());
@@ -581,7 +656,7 @@ export class UI {
         ${row('reducedMotion', 'Reduce motion')}
         ${row('haptics', 'Haptics')}
         <div class="desc" style="opacity:.7;font-size:13px">${persistent ? 'Progress is saved on this device.' : 'Storage unavailable: progress will not be saved.'}</div>
-        <div class="desc" style="opacity:.7;font-size:13px">Keyboard: ← → aim · ↑ ↓ loft · hold Space to swing.</div>
+        <div class="desc" style="opacity:.7;font-size:13px">Keyboard: ← → aim · ↑ ↓ loft · Space to swing · D to detonate.</div>
       </div>
       <div class="panel-actions"><button id="settings-back">Done</button></div>`;
     this.settings.querySelectorAll<HTMLButtonElement>('[data-set]').forEach((b) => b.addEventListener('click', () => this.h.onToggleSetting(b.dataset.set as 'sound')));
@@ -590,6 +665,10 @@ export class UI {
 
   /** Animates the score counter toward its target. */
   tick(dt: number) {
+    if (this.pitchPillTimer > 0) {
+      this.pitchPillTimer -= dt;
+      if (this.pitchPillTimer <= 0) this.pitchPill.classList.remove('visible');
+    }
     if (this.displayedScore !== this.targetScore) {
       const diff = this.targetScore - this.displayedScore;
       const step = Math.sign(diff) * Math.max(1, Math.abs(diff) * Math.min(1, dt * 8));

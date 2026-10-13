@@ -1,3 +1,5 @@
+export type EquipKind = 'bat' | 'ball' | 'rocket';
+
 export interface Settings {
   sound: boolean;
   shake: boolean;
@@ -16,8 +18,11 @@ export interface Profile {
   roundsPlayed: number;
   unlockedBats: string[];
   unlockedBalls: string[];
+  unlockedRockets: string[];
   equippedBat: string;
   equippedBall: string;
+  equippedRocket: string;
+  buildingsDemolished: number;
   completedChallenges: string[];
   activeChallenge: string | null;
   settings: Settings;
@@ -36,8 +41,11 @@ export function defaultProfile(): Profile {
     roundsPlayed: 0,
     unlockedBats: ['balanced'],
     unlockedBalls: ['standard'],
+    unlockedRockets: ['sparkler'],
     equippedBat: 'balanced',
     equippedBall: 'standard',
+    equippedRocket: 'sparkler',
+    buildingsDemolished: 0,
     completedChallenges: [],
     activeChallenge: null,
     settings: { sound: true, shake: true, reducedMotion: false, haptics: true, slowmo: true },
@@ -86,8 +94,11 @@ export function sanitizeProfile(raw: unknown): Profile {
     roundsPlayed: Math.floor(num(r.roundsPlayed, 0)),
     unlockedBats: strArr(r.unlockedBats, d.unlockedBats),
     unlockedBalls: strArr(r.unlockedBalls, d.unlockedBalls),
+    unlockedRockets: strArr(r.unlockedRockets, d.unlockedRockets),
     equippedBat: typeof r.equippedBat === 'string' ? r.equippedBat : d.equippedBat,
     equippedBall: typeof r.equippedBall === 'string' ? r.equippedBall : d.equippedBall,
+    equippedRocket: typeof r.equippedRocket === 'string' ? r.equippedRocket : d.equippedRocket,
+    buildingsDemolished: Math.floor(num(r.buildingsDemolished, 0)),
     completedChallenges: strArr(r.completedChallenges, []),
     activeChallenge: typeof r.activeChallenge === 'string' ? r.activeChallenge : null,
     settings: {
@@ -100,6 +111,7 @@ export function sanitizeProfile(raw: unknown): Profile {
   };
   if (!p.unlockedBats.includes(p.equippedBat)) p.equippedBat = 'balanced';
   if (!p.unlockedBalls.includes(p.equippedBall)) p.equippedBall = 'standard';
+  if (!p.unlockedRockets.includes(p.equippedRocket)) p.equippedRocket = 'sparkler';
   return p;
 }
 
@@ -141,7 +153,7 @@ export class ProfileStore {
   }
 
   /** Applies a finished round. Returns whether a new best score was set. */
-  applyRound(total: number, bestShot: number, bestCombo: number, longest: number, credits: number): boolean {
+  applyRound(total: number, bestShot: number, bestCombo: number, longest: number, credits: number, buildingsDemolished = 0): boolean {
     const p = this.profile;
     const record = total > p.bestScore;
     p.bestScore = Math.max(p.bestScore, total);
@@ -150,13 +162,19 @@ export class ProfileStore {
     p.longestDistance = Math.max(p.longestDistance, longest);
     p.roundsPlayed++;
     p.credits += credits;
+    p.buildingsDemolished += buildingsDemolished;
     this.save();
     return record;
   }
 
-  tryUnlock(kind: 'bat' | 'ball', id: string, cost: number): boolean {
+  private listFor(kind: EquipKind): string[] {
     const p = this.profile;
-    const list = kind === 'bat' ? p.unlockedBats : p.unlockedBalls;
+    return kind === 'bat' ? p.unlockedBats : kind === 'ball' ? p.unlockedBalls : p.unlockedRockets;
+  }
+
+  tryUnlock(kind: EquipKind, id: string, cost: number): boolean {
+    const p = this.profile;
+    const list = this.listFor(kind);
     if (list.includes(id)) return true;
     if (p.credits < cost) return false;
     p.credits -= cost;
@@ -165,12 +183,13 @@ export class ProfileStore {
     return true;
   }
 
-  equip(kind: 'bat' | 'ball', id: string): boolean {
+  equip(kind: EquipKind, id: string): boolean {
     const p = this.profile;
-    const list = kind === 'bat' ? p.unlockedBats : p.unlockedBalls;
+    const list = this.listFor(kind);
     if (!list.includes(id)) return false;
     if (kind === 'bat') p.equippedBat = id;
-    else p.equippedBall = id;
+    else if (kind === 'ball') p.equippedBall = id;
+    else p.equippedRocket = id;
     this.save();
     return true;
   }

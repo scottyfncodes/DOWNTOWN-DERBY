@@ -3,28 +3,14 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RAPIER as R } from '../engine/physics';
 import { createRng, type Rng } from '../logic/rng';
+import { PITCH, CITY_Z0 } from '../logic/citylayout';
 import { makeFacade, makeRoofTexture, makeStreetTexture, type FacadeTextures } from './textures';
 import { PropManager, type Prop } from './props';
 import { StaticRegistry } from './statics';
 
-export const PITCH = 72;
-export const BLOCK = 56;
-export const ROWS = 8;
-export const COLS = 9;
-export const ROOF_Y = 64;
-export const CITY_SEED = 20261012;
-
-type Style = 'concrete' | 'brick' | 'glass' | 'tower';
-
-export interface Building {
-  x: number;
-  z: number;
-  w: number;
-  d: number;
-  h: number;
-  style: Style;
-  row: number;
-}
+export { PITCH, BLOCK, ROWS, COLS, ROOF_Y, CITY_SEED, generateLayout, type Building, type Style } from '../logic/citylayout';
+import { planCity, CITY_SEED, type Building, type Style } from '../logic/citylayout';
+import { DestructibleCity } from './buildings';
 
 const BILLBOARD_DESIGNS = [
   { text: 'DERBY COLA', sub: 'ICE COLD · ALL SUMMER', bg: '#d7263d', fg: '#fff4e0' },
@@ -35,59 +21,11 @@ const BILLBOARD_DESIGNS = [
   { text: 'GRAND SLAM', sub: 'INSURANCE FOR BIG SWINGS', bg: '#ffd166', fg: '#1a1024' },
   { text: 'MOONSHOT', sub: 'SNEAKERS THAT FLY', bg: '#6a4c93', fg: '#ffe29a' },
   { text: 'HOT DOGS', sub: 'FRANK’S FAMOUS · SINCE 1952', bg: '#e76f51', fg: '#fff4e0' },
+  { text: 'ROCKET BALL', sub: 'TAP TO DETONATE', bg: '#ff6b4a', fg: '#1a1024' },
 ];
 const SIGN_WORDS = ['HOTEL', 'DINER', 'BOWL', 'PIZZA', 'RADIO', 'NEON', 'JAZZ', 'TACOS', 'ARCADE'];
 const SIGN_COLORS = ['#ff4fa3', '#5ec6ff', '#4ee6b0', '#ffd166', '#ff6b4a'];
 const CAR_COLORS = [0xe63946, 0xf1faee, 0xa8dadc, 0x457b9d, 0xffd166, 0x2a9d8f, 0xf4a261, 0x3d405b, 0xffffff, 0x222222];
-
-function rowHeight(rng: Rng, row: number): number {
-  const ranges: [number, number][] = [
-    [14, 38],
-    [20, 52],
-    [28, 78],
-    [40, 105],
-    [50, 130],
-    [70, 160],
-    [90, 190],
-    [110, 225],
-  ];
-  const [lo, hi] = ranges[Math.min(ROWS - 1, row)];
-  let h = rng.range(lo, hi);
-  if (rng.chance(0.12)) h *= 1.3;
-  return Math.min(240, Math.round(h));
-}
-
-function pickStyle(rng: Rng, row: number): Style {
-  const r = rng.next();
-  if (row <= 1) return r < 0.4 ? 'concrete' : r < 0.72 ? 'brick' : r < 0.9 ? 'glass' : 'tower';
-  if (row <= 4) return r < 0.25 ? 'concrete' : r < 0.4 ? 'brick' : r < 0.75 ? 'glass' : 'tower';
-  return r < 0.15 ? 'concrete' : r < 0.55 ? 'glass' : 'tower';
-}
-
-export function generateLayout(seed = CITY_SEED): Building[] {
-  const rng = createRng(seed);
-  const buildings: Building[] = [];
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < COLS; col++) {
-      const cx = (col - (COLS - 1) / 2) * PITCH;
-      const cz = -(60 + row * PITCH);
-      const split = rng.next();
-      const lots: [number, number, number, number][] = [];
-      const half = BLOCK / 2;
-      if (split < 0.3) lots.push([cx, cz, BLOCK, BLOCK]);
-      else if (split < 0.6) lots.push([cx - half / 2, cz, half, BLOCK], [cx + half / 2, cz, half, BLOCK]);
-      else if (split < 0.8) lots.push([cx, cz - half / 2, BLOCK, half], [cx, cz + half / 2, BLOCK, half]);
-      else lots.push([cx - half / 2, cz - half / 2, half, half], [cx + half / 2, cz - half / 2, half, half], [cx - half / 2, cz + half / 2, half, half], [cx + half / 2, cz + half / 2, half, half]);
-      for (const [lx, lz, lw, ld] of lots) {
-        const inset = rng.range(2, 5);
-        const w = Math.round(lw - inset * 2);
-        const d = Math.round(ld - inset * 2);
-        buildings.push({ x: lx, z: lz, w, d, h: rowHeight(rng, row), style: pickStyle(rng, row), row });
-      }
-    }
-  }
-  return buildings;
-}
 
 /** Scales box UVs so a facade texture tile covers `tile` metres, with a random offset so lit windows do not repeat in lockstep. */
 function scaleBoxUVs(geo: THREE.BoxGeometry, w: number, h: number, d: number, tile: [number, number], ox: number, oy: number) {
@@ -116,11 +54,14 @@ export interface CityBuild {
   buildings: Building[];
   group: THREE.Group;
   collidable: THREE.Object3D[];
+  destructible: DestructibleCity;
 }
 
-export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropManager, statics: StaticRegistry, envMap: THREE.Texture | null, seed = CITY_SEED): CityBuild {
+export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropManager, statics: StaticRegistry, envMap: THREE.Texture | null, maxChunks: number, seed = CITY_SEED): CityBuild {
   const rng = createRng(seed + 1);
-  const buildings = generateLayout(seed);
+  const plan = planCity(seed);
+  const buildings = plan.all;
+  const destructible = new DestructibleCity(world, plan.destructible, envMap, maxChunks);
   const group = new THREE.Group();
   const collidable: THREE.Object3D[] = [];
   const facades: Record<Style, FacadeTextures> = {
@@ -170,7 +111,7 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
   // Ground
   const groundTex = makeStreetTexture();
   groundTex.repeat.set(1400 / PITCH, 1400 / PITCH);
-  groundTex.offset.set(0.5 - (60 - PITCH / 2) / PITCH, 0.5);
+  groundTex.offset.set(0.5 - (CITY_Z0 - PITCH / 2) / PITCH, 0.5);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.95 }));
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, 0, -300);
@@ -182,8 +123,9 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
   let glassCount = 0;
 
   for (const b of buildings) {
-    addBuildingGeometry(b);
+    if (!b.destructible) addBuildingGeometry(b);
     const zf = b.z + b.d / 2; // player-facing face
+    const dyn = b.destructible; // facade-mounted props are skipped on destructible buildings (their walls are the targets)
     const roofSlots: THREE.Vector3[] = [];
     for (let gx = -b.w / 2 + 4; gx <= b.w / 2 - 4; gx += 5) for (let gz = -b.d / 2 + 4; gz <= b.d / 2 - 4; gz += 5) roofSlots.push(new THREE.Vector3(b.x + gx, b.h, b.z + gz));
     for (let i = roofSlots.length - 1; i > 0; i--) {
@@ -227,7 +169,7 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
         }
       }
       // Facade glass: curtain-wall grids on glass/tower styles, plus side-face panels for angled shots.
-      if ((b.style === 'glass' || b.style === 'tower') && b.h >= 24 && glassCount < 1300) {
+      if (!dyn && (b.style === 'glass' || b.style === 'tower') && b.h >= 24 && glassCount < 1300) {
         const size = 4.4;
         const cols = Math.min(5, Math.floor((b.w - 2) / (size + 0.3)));
         const rows = Math.min(4, Math.floor((b.h - 6) / (size + 0.3)));
@@ -256,7 +198,7 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
         }
       }
       // Street-level storefront glass on every near building: where rolling and bouncing balls end up.
-      if (row <= 4 && glassCount < 1400) {
+      if (!dyn && row <= 4 && glassCount < 1400) {
         const sw = 4.2;
         const cols = Math.min(6, Math.floor((b.w - 3) / (sw + 0.4)));
         const totalW = cols * (sw + 0.4);
@@ -277,17 +219,17 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
           }
         }
       }
-      if (row <= 3 && b.style !== 'glass' && b.style !== 'tower' && rng.chance(0.4)) {
+      if (!dyn && row <= 3 && b.style !== 'glass' && b.style !== 'tower' && rng.chance(0.4)) {
         const side = rng.chance(0.5) ? -1 : 1;
         const y = Math.min(b.h - 4, Math.max(5, b.h * 0.55));
         props.neonSign(new THREE.Vector3(b.x + side * (b.w / 2 - 1.5), y, zf + 0.85), 0, rng.pick(SIGN_WORDS), rng.pick(SIGN_COLORS));
       }
-      if (row <= 2 && (b.style === 'concrete' || b.style === 'brick') && rng.chance(0.6)) {
+      if (!dyn && row <= 2 && (b.style === 'concrete' || b.style === 'brick') && rng.chance(0.6)) {
         const width = rng.range(5, Math.min(9, b.w * 0.5));
         const ax = b.x + rng.range(-(b.w / 2 - width / 2 - 0.5), b.w / 2 - width / 2 - 0.5);
         props.awning(new THREE.Vector3(ax, 3.8, zf + 1.2), 0, width, rng.chance(0.5));
       }
-      if (row <= 2 && rng.chance(0.18)) {
+      if (!dyn && row <= 2 && rng.chance(0.18)) {
         const width = Math.min(b.w * 0.8, 15);
         const height = Math.min(b.h * 0.8, 15);
         const depth = 2.2;
@@ -331,7 +273,7 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
   }
 
   // Elevated roadway between rows 2 and 3.
-  const viaZ = -240;
+  const viaZ = -(CITY_Z0 + PITCH * 2.5);
   const deckY = 11;
   const deck = new THREE.Mesh(new THREE.BoxGeometry(640, 1.4, 14), new THREE.MeshStandardMaterial({ color: 0x7a7570, roughness: 0.9 }));
   deck.position.set(0, deckY, viaZ);
@@ -409,14 +351,14 @@ export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropMa
   const bdMesh = new THREE.Mesh(bd, bdMat);
   group.add(bdMesh);
 
-  // Bonus target candidate: near billboards and water towers.
+  group.add(destructible.group);
   group.add(props.group);
   scene.add(group);
-  return { buildings, group, collidable: [...collidable, props.group] };
+  return { buildings, group, collidable: [...collidable, props.group], destructible };
 }
 
 export function pickBonusTarget(props: PropManager, rng: Rng): Prop | null {
-  const cands = props.props.filter((p) => (p.material === 'billboard' || p.material === 'watertower') && p.initialPos.z > -330);
+  const cands = props.props.filter((p) => (p.material === 'billboard' || p.material === 'watertower') && p.initialPos.z > -(CITY_Z0 + PITCH * 3.8));
   if (!cands.length) return null;
   return rng.pick(cands);
 }
