@@ -127,8 +127,11 @@ test('a visible pitcher throws, the batter swings, rockets detonate and building
   // Real demolition happened: sections broke, rockets detonated, and the city's world state changed.
   expect(info.shots.some((s) => s.sectionsDestroyed > 0)).toBe(true);
   expect(info.shots.some((s) => s.detonated)).toBe(true);
-  expect(info.shots.filter((s) => s.quality === 'PERFECT' || s.quality === 'SOLID').every((s) => s.detonated)).toBe(true);
   expect(info.shots.filter((s) => s.quality === 'POOR' || s.quality === 'WEAK' || s.quality === 'MISS').every((s) => !s.detonated)).toBe(true);
+  // The ball never explodes on its own: shots where nobody pressed DETONATE finish their flight as duds.
+  plan.forEach((p, i) => {
+    if (p.det === null) expect(info.shots[i].detonated).toBe(false);
+  });
   expect(info.total).toBeGreaterThan(0);
   const cityAfter = await page.evaluate(() => (window as unknown as { __derby: { structures: { stats: () => { damaged: number; collapsed: number; broken: number } } } }).__derby.structures.stats());
   expect(cityAfter.broken).toBeGreaterThan(0);

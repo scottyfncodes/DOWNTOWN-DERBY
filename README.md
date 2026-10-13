@@ -9,7 +9,7 @@ A mobile-first 3D arcade demolition game by HaveAnApp. You bat from a downtown r
 - **Drag** on the city to aim (horizontal = direction, vertical = loft, down to -14° for line drives into facades).
 - Every hit takes a chunk out of the building it strikes. The size of the chunk is set by contact quality, ball speed and ball mass: a perfect swing tears out several sections across multiple floors and throws wall fragments into the street; a poor one chips a panel.
 - Watch the pitcher's wind-up. **Tap SWING** as the ball crosses the plate. The timing ring fills with the pitch; the green zone is the perfect window. Early swings pull left and top the ball, late swings push right and pop it up, and far-off swings whiff or foul.
-- Perfect and Solid contact arm the rocket. It ignites a third of a second after contact; tap **DETONATE** any time while it is lit. Outside a wall: a wide scar. Just inside the breach: weakened supports. Deep inside near the core: a floor fails and everything above it comes down. The warhead's charge drains with time and with every wall it punches through, so a fresh blast is the strongest and a deep one trades power for position.
+- Perfect and Solid contact arm the rocket. It ignites a third of a second after contact; tap **DETONATE** any time while it is lit. Outside a wall: a wide scar. Just inside the breach: weakened supports. Deep inside near the core: a floor fails and everything above it comes down. The warhead's charge drains with time and with every wall it punches through, so a fresh blast is the strongest and a deep one trades power for position. The rocket never explodes on its own: if you don't tap DETONATE, the ball finishes its natural flight (lands, bounces, rolls to a stop) and the warhead goes dead as a dud.
 - Every building in the city grid is destructible, from the low-rises across the street to the towers at the back.
 - Rubble stays. Wall chunks and collapse debris settle and remain for the whole round, piling up in the streets and on what is left of each building; the ball bounces off the piles and later debris lands on top.
 - Debris from a collapse damages whatever it lands on. A collapse triggered by another building's rubble is a **chain collapse** and scores double.
@@ -48,7 +48,7 @@ src/logic/      pure, deterministic game rules (no DOM, no three.js, no physics 
   batting.ts    contact model (timing error → quality, power, spray, spin), launch velocity + spin from aim/contact/pitch
   structure.ts  structural model: cells (facade/corner/core/slab) with hit points + bearing weight, floor integrity,
                 collapse evaluation (floor fails → floors above removed), blast/impact/penetration formulas, chunking
-  rocket.ts     rocket catalog + fuse/burn/coast state machine, charge drain, blast power, self-destruct
+  rocket.ts     rocket catalog + fuse/burn/coast state machine, charge drain, blast power (never self-detonates)
   citylayout.ts procedural lots → structural specs for every building (fine sections near the plate, 2× sections further out)
   scoring.ts    per-shot scorer: props, building sections, collapses, chain collapses, detonations, bonuses
   equipment.ts  bats, balls, rockets · challenges.ts tracked objectives · progression.ts profile + storage

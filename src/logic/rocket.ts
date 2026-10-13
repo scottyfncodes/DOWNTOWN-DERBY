@@ -19,8 +19,6 @@ export interface RocketSpec {
   blastPower: number;
   /** damage multiplier when punching through structure */
   penetration: number;
-  /** seconds of coasting after burnout before self-destruct */
-  coast: number;
   /** charge drained per second of flight */
   drain: number;
   tags: { label: string; dir: 'up' | 'down' | 'flat' }[];
@@ -30,7 +28,7 @@ export const ROCKETS: RocketSpec[] = [
   {
     id: 'sparkler',
     name: 'Sparkler Mk I',
-    desc: 'Entry-level booster strapped to a baseball. Quick burn, honest blast. Tap DETONATE anytime after ignition.',
+    desc: 'Entry-level booster strapped to a baseball. Quick burn, honest blast. Tap DETONATE anytime after ignition; leave it and the ball just finishes its flight.',
     cost: 0,
     thrust: 26,
     burn: 2.1,
@@ -39,7 +37,6 @@ export const ROCKETS: RocketSpec[] = [
     blastRadius: 21,
     blastPower: 62,
     penetration: 2.2,
-    coast: 0.9,
     drain: 0.06,
     tags: [{ label: 'Balanced', dir: 'flat' }],
   },
@@ -55,7 +52,6 @@ export const ROCKETS: RocketSpec[] = [
     blastRadius: 16,
     blastPower: 76,
     penetration: 3.6,
-    coast: 1.1,
     drain: 0.04,
     tags: [
       { label: 'Penetration +60%', dir: 'up' },
@@ -75,7 +71,6 @@ export const ROCKETS: RocketSpec[] = [
     blastRadius: 31,
     blastPower: 82,
     penetration: 1.3,
-    coast: 0.7,
     drain: 0.1,
     tags: [
       { label: 'Blast radius +48%', dir: 'up' },
@@ -96,7 +91,6 @@ export const ROCKETS: RocketSpec[] = [
     blastRadius: 20,
     blastPower: 66,
     penetration: 2.4,
-    coast: 0.8,
     drain: 0.09,
     tags: [
       { label: 'Thrust +70%', dir: 'up' },
@@ -116,11 +110,12 @@ export function armsOnQuality(q: ContactQuality): boolean {
 }
 
 export type RocketPhase = 'idle' | 'armed' | 'burning' | 'coasting' | 'spent';
-export type RocketEvent = 'ignite' | 'burnout' | 'autodetonate' | null;
+export type RocketEvent = 'ignite' | 'burnout' | null;
 
 /**
- * Deterministic rocket state machine. Owns ignition timing, burn, charge (blast energy) and the self-destruct rule.
- * Physics forces are applied by the caller using `thrustNow()`.
+ * Deterministic rocket state machine. Owns ignition timing, burn and charge (blast energy).
+ * It never explodes on its own: after burnout the ball coasts on its natural flight path and the warhead stays live
+ * until the player detonates or the ball comes to rest (`fizzle`). Physics forces are applied by the caller.
  */
 export class RocketState {
   phase: RocketPhase = 'idle';
@@ -129,7 +124,7 @@ export class RocketState {
   charge = 1;
   /** remaining burn seconds */
   burnLeft = 0;
-  /** seconds spent coasting after burnout */
+  /** seconds spent coasting after burnout (informational) */
   coastTime = 0;
   /** structures penetrated so far */
   penetrations = 0;
@@ -185,9 +180,8 @@ export class RocketState {
       }
       return null;
     }
-    // coasting
+    // Coasting: the ball finishes its flight path; nothing happens unless the player detonates.
     this.coastTime += dt;
-    if (this.coastTime >= this.spec.coast || this.charge <= 0.08) return 'autodetonate';
     return null;
   }
 
@@ -234,7 +228,14 @@ export class RocketState {
     return this.spec.blastRadius * (0.75 + 0.25 * this.charge);
   }
 
-  /** Player (or self-destruct) detonation. Returns false if there is nothing to detonate. */
+  /** The ball's flight is over and nobody pressed DETONATE: the warhead goes dead without exploding. */
+  fizzle(): boolean {
+    if (!this.lit) return false;
+    this.phase = 'spent';
+    return true;
+  }
+
+  /** Player detonation. Returns false if there is nothing to detonate. */
   detonate(): boolean {
     if (!this.lit) return false;
     this.phase = 'spent';

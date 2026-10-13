@@ -120,7 +120,6 @@ export class Game {
   private unstableTimer = 0;
   private penetratedThisStep = false;
   private rocketIgnitedAt = -1;
-  private slowRocketTimer = 0;
   private exhaustAcc = 0;
   private roundDemolished = 0;
   private deckSmashed = false;
@@ -684,8 +683,6 @@ export class Game {
       const ev: ImpactEvent = { objectId: st.id, material, speed, direct: true, destroyed: false, time: now, position: { x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z } };
       const line = this.scorer?.impact(ev) ?? null;
       if (speed > 4) this.feedback(line, material, speed, false, this.ball.pos, true);
-      // A lit rocket that slams into solid scenery goes off.
-      if (this.rocket.lit && speed > 12) this.detonate();
     }
   }
 
@@ -744,11 +741,8 @@ export class Game {
         this.haptic(15);
       }
     } else if (!main.broke) {
+      // Failed to breach: the ball bounces off and carries on. Only the player sets off the warhead.
       this.camera.kick(Math.min(0.5, speed / 100));
-      if (lit) {
-        // A rocket that fails to breach a wall goes off against it.
-        this.detonate();
-      }
     }
   }
 
@@ -1155,8 +1149,6 @@ export class Game {
       } else if (ev === 'burnout') {
         this.ball.thrust = 0;
         this.ball.lift = 0;
-      } else if (ev === 'autodetonate') {
-        this.detonate();
       }
       if (this.rocket.lit && this.ball.active) {
         const speed = this.ball.vel.length();
@@ -1176,10 +1168,6 @@ export class Game {
         }
         if (this.debug.autoDetonate !== null && this.simTime - this.rocketIgnitedAt >= this.debug.autoDetonate) this.detonate();
         else if (this.debug.autoDetonateInside && this.structures.structureAt(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z)) this.detonate();
-        // A lit rocket that has stalled (lodged, rolling) goes off on its own.
-        if (speed < 7) this.slowRocketTimer += simDt;
-        else this.slowRocketTimer = 0;
-        if (this.slowRocketTimer > 0.35 || this.ball.isOutOfBounds) this.detonate();
       } else if (this.rocket.phase === 'armed') {
         this.ui.setRocket('armed');
       }
@@ -1188,7 +1176,19 @@ export class Game {
     }
     const quiet = !this.scorer || this.simTime - this.scorer.lastScoreTime > 3;
     const whiff = this.contact?.quality === 'MISS';
-    const ballDone = !this.ball.active || this.ball.isResting || this.ball.isOutOfBounds || this.ball.flightTime > (whiff ? 3 : 14) || (this.ball.isDull && quiet);
+    // The ball always finishes its flight path: it lands, bounces, rolls to rest or leaves town.
+    const ballDone = !this.ball.active || this.ball.isResting || this.ball.isOutOfBounds || this.ball.flightTime > (whiff ? 3 : 20) || (this.ball.isDull && quiet);
+    if (ballDone && this.rocket.lit) {
+      // Never detonated: the warhead goes dead quietly.
+      this.rocket.fizzle();
+      this.ball.thrust = 0;
+      this.ball.lift = 0;
+      this.ball.setGlow(0.45, 0xffe9b0);
+      this.flame.group.visible = false;
+      this.ui.setRocket('hidden');
+      this.audio.rocketStop();
+      this.ui.showToast('Dud: no detonation');
+    }
     const worldQuiet = this.structures.activeChunks === 0 || this.simTime - this.lastWorldEvent > 2.6;
     if (ballDone && worldQuiet && !this.rocket.lit) {
       this.round.transition('SHOT_RESOLVING');
