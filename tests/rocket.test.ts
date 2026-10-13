@@ -21,29 +21,43 @@ describe('rocket state machine', () => {
     expect(r.detonate()).toBe(false);
   });
 
-  it('ignites after the delay, burns, coasts, then self-destructs if never detonated', () => {
+  it('ignites after the delay, burns, then coasts indefinitely: it never explodes on its own', () => {
     const r = new RocketState(spec);
     expect(r.arm('PERFECT')).toBe(true);
     const events: string[] = [];
     let t = 0;
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 60 * 30; i++) {
       const e = r.tick(1 / 60);
       t += 1 / 60;
       if (e) events.push(`${e}@${t.toFixed(2)}`);
-      if (e === 'autodetonate') break;
     }
     const at = (e: string) => parseFloat(e.split('@')[1]);
+    expect(events.length).toBe(2);
     expect(events[0].startsWith('ignite@')).toBe(true);
     expect(at(events[0])).toBeCloseTo(spec.igniteDelay, 1);
     expect(events[1].startsWith('burnout@')).toBe(true);
     expect(at(events[1])).toBeCloseTo(spec.igniteDelay + spec.burn, 1);
-    expect(events[2].startsWith('autodetonate@')).toBe(true);
-    expect(at(events[2])).toBeCloseTo(spec.igniteDelay + spec.burn + spec.coast, 1);
+    // 30 seconds later it is still coasting and still detonatable by the player.
     expect(r.phase).toBe('coasting');
+    expect(r.canDetonate).toBe(true);
     expect(r.detonate()).toBe(true);
     expect(r.phase).toBe('spent');
     expect(r.finished).toBe(true);
     expect(r.tick(1)).toBeNull();
+  });
+
+  it('fizzle ends an undetonated rocket without a blast once the flight is over', () => {
+    const r = new RocketState(spec);
+    expect(r.fizzle()).toBe(false); // nothing armed
+    r.arm('SOLID');
+    r.tick(0.1);
+    expect(r.fizzle()).toBe(false); // armed but not lit yet
+    r.tick(1);
+    expect(r.lit).toBe(true);
+    expect(r.fizzle()).toBe(true);
+    expect(r.phase).toBe('spent');
+    expect(r.canDetonate).toBe(false);
+    expect(r.detonate()).toBe(false);
   });
 
   it('thrust and lift apply only while burning; fuel reads down to zero', () => {
@@ -90,15 +104,15 @@ describe('rocket state machine', () => {
     expect(r.charge).toBeLessThan(0.3);
   });
 
-  it('a drained rocket self-destructs early while coasting', () => {
+  it('a fully drained rocket still never self-destructs', () => {
     const r = new RocketState(spec);
     r.arm('PERFECT');
     r.tick(0.4);
     for (let i = 0; i < 20; i++) r.penetrate(10, 12, true);
     expect(r.charge).toBeLessThanOrEqual(0.08);
-    let ev: string | null = null;
-    for (let i = 0; i < 400 && ev !== 'autodetonate'; i++) ev = r.tick(1 / 60);
-    expect(ev).toBe('autodetonate');
+    for (let i = 0; i < 600; i++) expect(r.tick(1 / 60)).not.toBe('autodetonate' as unknown);
+    expect(r.lit).toBe(true);
+    expect(r.blastPower()).toBeGreaterThan(spec.blastPower * 0.5);
   });
 
   it('reset returns to idle and can be re-armed next swing', () => {
