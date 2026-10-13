@@ -57,11 +57,11 @@ export interface CityBuild {
   destructible: DestructibleCity;
 }
 
-export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropManager, statics: StaticRegistry, envMap: THREE.Texture | null, maxChunks: number, seed = CITY_SEED): CityBuild {
+export function buildCity(scene: THREE.Scene, world: RAPIER.World, props: PropManager, statics: StaticRegistry, envMap: THREE.Texture | null, maxChunks: number, rubbleCapacity: number, seed = CITY_SEED): CityBuild {
   const rng = createRng(seed + 1);
   const plan = planCity(seed);
   const buildings = plan.all;
-  const destructible = new DestructibleCity(world, plan.destructible, envMap, maxChunks);
+  const destructible = new DestructibleCity(world, plan.destructible, envMap, maxChunks, statics, rubbleCapacity);
   const group = new THREE.Group();
   const collidable: THREE.Object3D[] = [];
   const facades: Record<Style, FacadeTextures> = {

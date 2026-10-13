@@ -9,10 +9,15 @@ export const ROOF_Y = 46;
 export const CITY_SEED = 20261012;
 /** Centre z of the first row of blocks (negative z is away from the batter). */
 export const CITY_Z0 = 76;
-/** Rows and columns that are fully destructible; everything else is static scenery. */
-export const DESTRUCTIBLE_ROWS = 4;
-export const DESTRUCTIBLE_COL_MIN = 2;
-export const DESTRUCTIBLE_COL_MAX = 6;
+/**
+ * Every building in the grid is destructible. The near blocks (in front of the batter) use fine sections; everything
+ * further out uses sections twice as wide and twice as tall (textures tile to match) to keep the city phone-sized.
+ */
+export const NEAR_ROWS = 4;
+export const NEAR_COL_MIN = 2;
+export const NEAR_COL_MAX = 6;
+/** Section size multiplier for buildings outside the near blocks. */
+export const FAR_GRAIN = 2;
 /** Target cell footprint (m) and floor height (m). */
 export const CELL_W = 9;
 export const FLOOR_H = 4.8;
@@ -30,6 +35,8 @@ export interface Building {
   row: number;
   col: number;
   destructible: boolean;
+  /** section size multiplier (1 = near detail, FAR_GRAIN = distant buildings) */
+  grain: number;
 }
 
 function rowHeight(rng: Rng, row: number): number {
@@ -56,8 +63,17 @@ function pickStyle(rng: Rng, row: number): Style {
   return r < 0.15 ? 'concrete' : r < 0.55 ? 'glass' : 'tower';
 }
 
-export function isDestructibleLot(row: number, col: number): boolean {
-  return row < DESTRUCTIBLE_ROWS && col >= DESTRUCTIBLE_COL_MIN && col <= DESTRUCTIBLE_COL_MAX;
+export function isNearLot(row: number, col: number): boolean {
+  return row < NEAR_ROWS && col >= NEAR_COL_MIN && col <= NEAR_COL_MAX;
+}
+
+/** Every lot is destructible; kept as a function so callers read clearly. */
+export function isDestructibleLot(_row: number, _col: number): boolean {
+  return true;
+}
+
+export function lotGrain(row: number, col: number): number {
+  return isNearLot(row, col) ? 1 : FAR_GRAIN;
 }
 
 /** Procedural lot layout for the whole grid. Deterministic for a seed. */
@@ -69,12 +85,14 @@ export function generateLayout(seed = CITY_SEED): Building[] {
       const cx = (col - (COLS - 1) / 2) * PITCH;
       const cz = -(CITY_Z0 + row * PITCH);
       const destructible = isDestructibleLot(row, col);
+      const near = isNearLot(row, col);
+      const grain = lotGrain(row, col);
       const split = rng.next();
       const lots: [number, number, number, number][] = [];
       const half = BLOCK / 2;
-      // Destructible blocks favour one or two bigger lots: fewer, more convincing buildings.
-      const one = destructible ? 0.42 : 0.3;
-      const two = destructible ? 0.9 : 0.8;
+      // Near blocks favour one or two bigger lots: fewer, more convincing buildings.
+      const one = near ? 0.42 : 0.3;
+      const two = near ? 0.9 : 0.8;
       if (split < one) lots.push([cx, cz, BLOCK, BLOCK]);
       else if (split < (one + two) / 2) lots.push([cx - half / 2, cz, half, BLOCK], [cx + half / 2, cz, half, BLOCK]);
       else if (split < two) lots.push([cx, cz - half / 2, BLOCK, half], [cx, cz + half / 2, BLOCK, half]);
@@ -83,7 +101,7 @@ export function generateLayout(seed = CITY_SEED): Building[] {
         const inset = rng.range(2, 5);
         const w = Math.round(lw - inset * 2);
         const d = Math.round(ld - inset * 2);
-        buildings.push({ x: lx, z: lz, w, d, h: rowHeight(rng, row), style: pickStyle(rng, row), row, col, destructible });
+        buildings.push({ x: lx, z: lz, w, d, h: rowHeight(rng, row), style: pickStyle(rng, row), row, col, destructible, grain });
       }
     }
   }
@@ -92,14 +110,15 @@ export function generateLayout(seed = CITY_SEED): Building[] {
 
 /** Converts a lot into a structural spec: floors, cell counts, core. Snaps height to whole floors. */
 export function toBuildingSpec(b: Building, id: number): BuildingSpec {
-  const fh = b.h > 56 ? FLOOR_H_TALL : FLOOR_H;
+  const g = b.grain ?? 1;
+  const fh = (b.h > 56 ? FLOOR_H_TALL : FLOOR_H) * g;
   const floors = Math.max(2, Math.round(b.h / fh));
   const h = floors * fh;
-  const nx = Math.max(2, Math.round((b.w - 2 * WALL_T) / CELL_W));
-  const nz = Math.max(2, Math.round((b.d - 2 * WALL_T) / CELL_W));
+  const nx = Math.max(2, Math.round((b.w - 2 * WALL_T) / (CELL_W * g)));
+  const nz = Math.max(2, Math.round((b.d - 2 * WALL_T) / (CELL_W * g)));
   const lowRise = (floors <= 4 && (b.style === 'brick' || b.style === 'concrete')) || (floors <= 6 && b.style === 'brick');
   const core = !lowRise && Math.min(b.w, b.d) >= 14;
-  return { id, x: b.x, z: b.z, w: b.w, d: b.d, h, style: b.style, floors, nx, nz, core };
+  return { id, x: b.x, z: b.z, w: b.w, d: b.d, h, style: b.style, floors, nx, nz, core, grain: g };
 }
 
 export interface CityPlan {

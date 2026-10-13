@@ -74,7 +74,7 @@ for (let i = 0; i < plan.length; i++) {
   let k = 0;
   while ((await st()) !== 'SHOT_RESULTS' && Date.now() - t0 < 240000) {
     await page.waitForTimeout(500);
-    const line = await page.evaluate(() => { const g = window.__derby; const b = g.ball; return `${g.round.state} rocket=${g.rocket.phase} charge=${g.rocket.charge.toFixed(2)} pos=${b.pos.x.toFixed(0)},${b.pos.y.toFixed(0)},${b.pos.z.toFixed(0)} v=${b.vel.length().toFixed(1)} ft=${b.flightTime.toFixed(1)} chunks=${g.structures.activeChunks} broken=${g.structures.stats().broken}`; });
+    const line = await page.evaluate(() => { const g = window.__derby; const b = g.ball; return `${g.round.state} rocket=${g.rocket.phase} charge=${g.rocket.charge.toFixed(2)} pos=${b.pos.x.toFixed(0)},${b.pos.y.toFixed(0)},${b.pos.z.toFixed(0)} v=${b.vel.length().toFixed(1)} ft=${b.flightTime.toFixed(1)} chunks=${g.structures.activeChunks} rubble=${g.structures.rubble.count} broken=${g.structures.stats().broken}`; });
     if (k % 4 === 0) console.log('  t', ((Date.now() - t0) / 1000).toFixed(1), line);
     if (i < 2 && k < 8) await page.screenshot({ path: `${dir}/flight-${i}-${k}.png` });
     if (/chunks=[1-9]/.test(line) && k % 2 === 0) await page.screenshot({ path: `${dir}/collapse-${i}-${k}.png` });
@@ -87,5 +87,5 @@ for (let i = 0; i < plan.length; i++) {
   await page.waitForTimeout(600);
   await page.evaluate(() => document.getElementById('shot-card').click());
 }
-console.log('city:', JSON.stringify(await page.evaluate(() => window.__derby.structures.stats())));
+console.log('city:', JSON.stringify(await page.evaluate(() => ({ ...window.__derby.structures.stats(), rubble: window.__derby.structures.rubble.count, buildings: window.__derby.structures.structures.length }))));
 await browser.close();

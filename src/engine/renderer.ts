@@ -11,6 +11,8 @@ export interface Quality {
   chunks: number;
   /** software / very weak GPU: no shadows, fewer effects */
   lowSpec: boolean;
+  /** persistent settled-rubble pieces */
+  rubble: number;
 }
 
 /** Reads the GPU renderer string (software renderers like SwiftShader/llvmpipe get the low-spec profile). */
@@ -41,6 +43,7 @@ export function detectQuality(): Quality {
     particles: lowSpec ? 300 : mobile ? 420 : 800,
     chunks: lowSpec ? 32 : mobile ? 44 : 64,
     lowSpec,
+    rubble: lowSpec ? 1800 : mobile ? 2600 : 4000,
   };
 }
 

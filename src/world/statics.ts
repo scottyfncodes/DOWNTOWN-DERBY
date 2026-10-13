@@ -15,4 +15,7 @@ export class StaticRegistry {
   register(collider: RAPIER.Collider, material: MaterialKind, top: number): void {
     this.byCollider.set(collider.handle, { material, top, id: `${material}-s${this.n++}` });
   }
+  unregister(handle: number): void {
+    this.byCollider.delete(handle);
+  }
 }
