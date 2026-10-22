@@ -27,6 +27,11 @@ export interface UIHandlers {
   onAimDrag: (dx: number, dy: number) => void;
 }
 
+// Hand-drawn speaker glyphs for the mute toggle, stroked in the HUD cream so they match the type, not an emoji set.
+const SPEAKER_BODY = '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>';
+const ICON_SOUND_ON = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${SPEAKER_BODY}<path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.8 7.8 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+const ICON_SOUND_OFF = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${SPEAKER_BODY}<path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -338,8 +343,9 @@ export class UI {
   }
 
   private makeMute(): HTMLButtonElement {
-    const b = el('button', 'ghost icon', '🔊');
+    const b = el('button', 'ghost icon', ICON_SOUND_ON);
     b.classList.add('mute-btn');
+    b.setAttribute('aria-label', 'Mute sound');
     b.addEventListener('click', () => this.h.onMute());
     this.muteBtns.push(b);
     return b;
@@ -347,12 +353,16 @@ export class UI {
   private makeSettingsBtn(): HTMLButtonElement {
     const b = el('button', 'ghost icon', '☰');
     b.classList.add('settings-btn');
+    b.setAttribute('aria-label', 'Settings');
     b.addEventListener('click', () => this.h.onSettings());
     return b;
   }
 
   setMuted(m: boolean) {
-    for (const b of this.muteBtns) b.textContent = m ? '🔇' : '🔊';
+    for (const b of this.muteBtns) {
+      b.innerHTML = m ? ICON_SOUND_OFF : ICON_SOUND_ON;
+      b.setAttribute('aria-label', m ? 'Unmute sound' : 'Mute sound');
+    }
   }
 
   hideLoading() {
@@ -555,7 +565,7 @@ export class UI {
         <div class="cell${shot.buildingsCollapsed ? ' hot' : ''}"><b>${shot.buildingsCollapsed}</b><span>Collapsed</span></div>
         <div class="cell"><b>×${shot.bestCombo}</b><span>Combo</span></div>
       </div>
-      ${shot.chainCollapses ? `<div class="chain-line">⚡ Chain reaction ×${shot.chainCollapses}</div>` : ''}
+      ${shot.chainCollapses ? `<div class="chain-line">Chain reaction ×${shot.chainCollapses}</div>` : ''}
       <div class="lines">${lines.map((l) => `<span class="line${l.kind !== 'impact' ? ' gold' : ''}">${l.label} +${l.points.toLocaleString()}</span>`).join('')}</div>
       <div class="next">Round ${total.toLocaleString()} · ${remaining > 0 ? `${remaining} ball${remaining === 1 ? '' : 's'} left · tap to continue` : 'tap for results'}</div>`;
     this.shotCard.classList.add('visible');
